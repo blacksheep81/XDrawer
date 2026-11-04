@@ -3,6 +3,7 @@
   "name": "X 抽屉",
   "version": "0.12.0",
   "description": "在你自己的浏览器中整理 X 书签、喜欢和手动保存帖子的本地资料库",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqaklpDgMCz5/R0ZhDpxgynYPSNrGh6fXfDfe/3OMibKsUk4Is4oQC857XMUYd0c07bs6vWMcNlxobmLcLZmcgB6ueGhhfCAi0DGOAsBKbclGwM9EmcjNtByD1bfy0UpdGi41l9dIye3+0/9Bs4tu5kYBGsIM6EFUv2szvAwZ4LNz8M/5DB8VkS25QGw/EINuEagDldMwvsIAMW6TPTf2vMUqqOBUZ7k4N1uV2kC/+UCPvVacmaQNnMhg8IqdHqRiTemuhI8KjedLUTvwVjRCNaJQ/BGrOmSI/mxCfxuA/h4WadtFMjs6O0esN1PlCQ6sE7fqp0M/gnq+cg0Z20bTlQIDAQAB",
   "permissions": ["tabs", "storage", "cookies"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "action": {
