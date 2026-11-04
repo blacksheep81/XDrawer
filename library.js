@@ -6,6 +6,9 @@ let editingTags = [], bulkTags = [];
 const activeTags = new Set();
 const selectedKeys = new Set();
 let visibleKeys = [];
+let tagColors = new Map();
+let renderedGroups = [], renderedTerms = [], shownCount = 0;
+const RENDER_BATCH = 120;
 let confirmResolve = null;
 
 const titles = { all:'全部收藏', bookmark:'书签', like:'喜欢', saved:'手动保存', people:'人物·小号' };
@@ -105,8 +108,19 @@ function isState(item, state) {
   return null;
 }
 
+/* 글 객체마다 소문자 검색 문자열을 한 번만 만든다. refresh()가 posts를 새로 읽으면 자연히 다시 계산된다. */
+const haystackCache = new WeakMap();
+function haystackOf(item) {
+  let text = haystackCache.get(item);
+  if (text === undefined) {
+    text = [item.text, item.note, item.author, item.username, item.url, ...(item.tags || []), ...(item.links || [])].join(' ').toLocaleLowerCase();
+    haystackCache.set(item, text);
+  }
+  return text;
+}
+
 function matchesQuery(item, parsed) {
-  const haystack = [item.text, item.note, item.author, item.username, item.url, ...(item.tags || []), ...(item.links || [])].join(' ').toLocaleLowerCase();
+  const haystack = haystackOf(item);
   if (!parsed.include.every(term => haystack.includes(term))) return false;
   if (parsed.exclude.some(term => haystack.includes(term))) return false;
   const who = `${item.username || ''} ${item.author || ''}`.toLocaleLowerCase();
@@ -158,6 +172,8 @@ async function refresh() {
   history = await getAll('history');
   people = await getAll('people');
   tagMeta = await getAll('tags');
+  tagColors = new Map(tagMeta.map(meta => [meta.name, safeColor(meta.color)]));
+  renderSourceFilters();
   const keys = new Set(posts.map(item => item.key));
   for (const key of selectedKeys) if (!keys.has(key)) selectedKeys.delete(key);
   render();
@@ -218,7 +234,7 @@ function tagCounts() {
   for (const meta of tagMeta) if (!counts.has(meta.name)) counts.set(meta.name, 0);
   return counts;
 }
-function tagColor(name) { return safeColor(tagMeta.find(meta => meta.name === name)?.color); }
+function tagColor(name) { return tagColors.get(name) || ''; }
 
 function renderTagBar() {
   const counts = tagCounts();
@@ -355,6 +371,12 @@ function render() {
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === view));
   if (!isPosts) return;
 
+  renderTagBar();
+  renderPosts();
+}
+
+/* 계정·작성자 선택지는 글 목록이 바뀔 때만 다시 만든다(검색어 입력마다 만들지 않는다). */
+function renderSourceFilters() {
   const selectedAccount = $('#accountFilter').value;
   const accounts = [...new Set(posts.map(item => item.account || 'legacy'))].sort();
   $('#accountFilter').innerHTML = '<option value="all">所有账号</option>' + accounts.map(account => {
@@ -375,9 +397,9 @@ function render() {
   $('#authorFilter').innerHTML = '<option value="all">所有作者</option>' + authors.map(([username, entry]) =>
     `<option value="${escapeHTML(username)}">${escapeHTML(entry.name)} · ${entry.count}</option>`).join('');
   $('#authorFilter').value = authors.some(([username]) => username === selectedAuthor) ? selectedAuthor : 'all';
+}
 
-  renderTagBar();
-
+function renderPosts() {
   const parsed = parseQuery($('#search').value.trim());
   const terms = parsed.include.filter(term => term.length > 0);
   const filtered = sortPosts(filteredPosts(parsed));
@@ -405,8 +427,11 @@ function render() {
   visibleKeys = filtered.map(item => item.key);
   updateSelection();
 
+  renderedGroups = groups;
+  renderedTerms = terms;
+  shownCount = 0;
   $('#cards').innerHTML = groups.length
-    ? groups.map(group => cardHTML(group, terms)).join('')
+    ? ''
     : `<div class="empty"><span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
 <h2>${filterCount ? '没有符合条件的帖子' : '还没有保存的帖子'}</h2>
 <p>${filterCount
@@ -415,15 +440,35 @@ function render() {
     ? '试试点击 X 帖子页面右下角的“✦ 保存到 X 抽屉”按钮。'
     : '登录 X 后，点击“＋ 从 X 导入”试试。'}</p></div>`;
 
-  $('#cards').querySelectorAll('.post-select').forEach(input => {
-    const keys = JSON.parse(input.dataset.keys);
-    input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
-  });
+  if (groups.length) showMoreCards();
 
   $('#history').innerHTML = [...history].reverse().slice(0,6).map(entry =>
     `<div class="history-row"><span>${escapeHTML(kindMarks[entry.collection] || entry.collection)}：确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
   ).join('') || '<p class="muted">还没有导入记录。</p>';
 }
+
+/* 카드를 한 번에 RENDER_BATCH 장씩 붙인다. 끝에 닿으면 다음 묶음을 자동으로 붙인다. */
+let moreObserver = null;
+function showMoreCards() {
+  const cards = $('#cards');
+  cards.querySelector('.load-more')?.remove();
+  const next = renderedGroups.slice(shownCount, shownCount + RENDER_BATCH);
+  shownCount += next.length;
+  cards.insertAdjacentHTML('beforeend', next.map(group => cardHTML(group, renderedTerms)).join(''));
+  for (const input of [...cards.querySelectorAll('.post-select')].slice(-next.length)) {
+    const keys = JSON.parse(input.dataset.keys);
+    input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
+  }
+  if (shownCount >= renderedGroups.length) return;
+  const rest = renderedGroups.length - shownCount;
+  cards.insertAdjacentHTML('beforeend', `<button type="button" class="ghost load-more">再显示 ${Math.min(rest, RENDER_BATCH).toLocaleString('zh-CN')} 张（还剩 ${rest.toLocaleString('zh-CN')} 张）</button>`);
+  if ('IntersectionObserver' in window) {
+    moreObserver ||= new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) showMoreCards(); }, { rootMargin:'600px' });
+    moreObserver.disconnect();
+    moreObserver.observe(cards.querySelector('.load-more'));
+  }
+}
+$('#cards').addEventListener('click', event => { if (event.target.closest('.load-more')) showMoreCards(); });
 
 /* ── 확인 대화상자 ───────────────────────────── */
 $('#confirmCancel').addEventListener('click', () => $('#confirmDialog').close('cancel'));
@@ -444,11 +489,15 @@ function confirmAction(title, text, okLabel) {
 /* ── 네비게이션·필터 연결 ────────────────────── */
 document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => { view = button.dataset.view; render(); }));
 
+/* 검색어는 입력이 잠깐 멈춘 뒤에 반영해, 글자마다 전체를 다시 그리지 않는다. */
+let renderTimer = 0;
+function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 150); }
+
 const filterControls = ['#search','#media','#sort','#accountFilter','#authorFilter','#readFilter','#linkFilter','#fromDate','#toDate','#layout','#collapseDuplicates','#untaggedOnly'];
 for (const id of filterControls) {
   const control = $(id);
   if (!control) { console.warn(`未找到筛选控件 ${id}。`); continue; }
-  control.addEventListener(id === '#search' ? 'input' : 'change', render);
+  control.addEventListener(id === '#search' ? 'input' : 'change', id === '#search' ? renderSoon : render);
 }
 for (const id of ['#fromDate','#toDate']) $(id).addEventListener('change', () => { $('#datePreset').value = $('#fromDate').value || $('#toDate').value ? 'custom' : 'all'; });
 
@@ -1133,6 +1182,15 @@ function applyStartupParams() {
   if (tag) activeTags.add(tag.slice(0,40));
   return params.get('scan') === '1';
 }
+
+/* 다른 페이지나 백그라운드가 DB를 바꾸면 열린 라이브러리도 새로 읽는다. 자기 자신의 쓰기는 이미 refresh()한다. */
+let liveRefreshTimer = 0;
+onDBChange(() => {
+  clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(() => {
+    Promise.all([refresh(), refreshSavedViews()]).catch(error => notice(`刷新收藏库失败：${error.message}`, true));
+  }, 300);
+});
 
 if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 const wantsScan = applyStartupParams();

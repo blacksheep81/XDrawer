@@ -54,6 +54,11 @@ function openDB() {
   });
 }
 
+/* 같은 확장 안의 다른 페이지(收藏库·팝업·백그라운드)에 DB 변경을 알린다. 보낸 쪽 자신에게는 전달되지 않는다. */
+const dbChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('x-drawer-db') : null;
+function announceDBChange() { try { dbChannel?.postMessage({ type:'changed', at:Date.now() }); } catch {} }
+function onDBChange(listener) { if (dbChannel) dbChannel.addEventListener('message', event => { if (event.data?.type === 'changed') listener(); }); }
+
 async function withTransaction(stores, mode, callback) {
   const db = await openDB();
   try {
@@ -61,7 +66,7 @@ async function withTransaction(stores, mode, callback) {
       const tx = db.transaction(stores, mode);
       let value;
       try { value = callback(tx); } catch (error) { tx.abort(); reject(error); return; }
-      tx.oncomplete = () => resolve(value);
+      tx.oncomplete = () => { if (mode === 'readwrite') announceDBChange(); resolve(value); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('数据库操作已取消。'));
     });

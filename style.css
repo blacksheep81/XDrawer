@@ -765,3 +765,5 @@ dialog textarea { resize: vertical; font-family: inherit; }
   .filterbar select { flex: 1 1 140px; max-width: none; }
   .feature-form { grid-template-columns: 1fr; }
 }
+
+.cards > .load-more { grid-column: 1 / -1; justify-self: center; margin: 6px 0 18px; padding: 9px 16px; }
