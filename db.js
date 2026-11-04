@@ -103,9 +103,26 @@ async function getAll(storeName) {
    규칙은 키워드(任一/全部)·제외어·작성자로 글을 고른다. 태그가 있으면 맞는 글에 태그를 붙인다.
    글의 ruleApplied에 "규칙ID:태그"를 남겨, 사용자가 태그를 지운 글에 다시 붙이지 않는다. */
 const RULE_LIMIT = 100;
+/* 쉼표로만 나눈다. 띄어쓰기가 든 구절("design system")은 한 단어로 유지한다. */
 function splitTerms(value) {
-  const list = Array.isArray(value) ? value : String(value || '').split(/[,，、;；\s]+/);
-  return [...new Set(list.map(term => String(term).trim().toLocaleLowerCase().slice(0,60)).filter(Boolean))].slice(0,50);
+  const list = Array.isArray(value) ? value : String(value || '').split(/[,，、;；]+/);
+  return [...new Set(list.map(term => String(term).replace(/\s+/g, ' ').trim().toLocaleLowerCase().slice(0,60)).filter(Boolean))].slice(0,50);
+}
+/* 규칙이 저장할 수 있는 내용 조건. 읽음 상태·태그처럼 사용자가 바꾸는 값은 자동 태그를 흔들 수 있어 받지 않는다. */
+const RULE_HAS_FLAGS = ['image','video','media','link'];
+function ruleFlags(value) { return [...new Set((Array.isArray(value) ? value : []).map(flag => String(flag).toLowerCase()))].filter(flag => RULE_HAS_FLAGS.includes(flag)); }
+function ruleHasFlag(item, flag) {
+  if (flag === 'image') return item.media === 'image';
+  if (flag === 'video') return item.media === 'video';
+  if (flag === 'media') return item.media !== 'text';
+  return !!(item.links || []).length;
+}
+const RULE_TAG_LIMIT = 20;
+const sameTags = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((tag, index) => tag === b[index]);
+/* 태그를 바꿀 때마다 tagRev를 올린다. 되돌리기는 이 값으로 "적용 뒤 태그를 손댔는지"를 판단한다.
+   (지웠다가 같은 이름을 다시 붙여도 값이 두 번 올라가므로 구별된다.) */
+function withTags(item, tags) {
+  return sameTags(item.tags || [], tags) ? { ...item, tags } : { ...item, tags, tagRev:(item.tagRev || 0) + 1 };
 }
 function normalizeRule(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('无效的分类规则。');
@@ -113,10 +130,14 @@ function normalizeRule(raw) {
   const name = typeof raw.name === 'string' ? raw.name.trim().slice(0,40) : '';
   if (!id || !name) throw new Error('分类规则缺少名称。');
   const keywords = splitTerms(raw.keywords);
-  const authors = splitTerms(raw.authors).map(handle => handle.replace(/^@/, '')).filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
-  if (!keywords.length && !authors.length) throw new Error('请至少填写一个关键词或作者。');
+  const handles = value => splitTerms(Array.isArray(value) ? value : String(value || '').split(/[\s,，、;；]+/)).map(handle => handle.replace(/^@/, '')).filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
+  const authors = handles(raw.authors);
+  const has = ruleFlags(raw.has);
+  if (!keywords.length && !authors.length && !has.length) throw new Error('请至少填写一个关键词、作者或 has: 条件。');
   return {
-    id, name, keywords, authors,
+    id, name, keywords, authors, has,
+    notHas: ruleFlags(raw.notHas),
+    notAuthors: handles(raw.notAuthors),
     match: raw.match === 'all' ? 'all' : 'any',
     exclude: splitTerms(raw.exclude),
     tag: typeof raw.tag === 'string' ? raw.tag.trim().replace(/^#/, '').slice(0,40) : '',
@@ -128,19 +149,25 @@ function ruleText(item) {
   return [item.text, item.note, item.author, item.username, item.url, ...(item.links || [])].join(' ').toLocaleLowerCase();
 }
 function ruleMatches(rule, item, text = ruleText(item)) {
-  if (rule.authors.length && !rule.authors.includes(String(item.username || '').toLowerCase())) return false;
+  const username = String(item.username || '').toLowerCase();
+  if (rule.authors.length && !rule.authors.includes(username)) return false;
+  if ((rule.notAuthors || []).includes(username)) return false;
+  if (!(rule.has || []).every(flag => ruleHasFlag(item, flag))) return false;
+  if ((rule.notHas || []).some(flag => ruleHasFlag(item, flag))) return false;
   if (rule.keywords.length && !(rule.match === 'all' ? rule.keywords.every(term => text.includes(term)) : rule.keywords.some(term => text.includes(term)))) return false;
   return !rule.exclude.some(term => text.includes(term));
 }
 const ruleMark = rule => `${rule.id}:${rule.tag}`;
-/* 맞는 글이면 태그를 붙인 새 객체를, 아니면 null을 돌려준다. added는 태그가 실제로 새로 붙었는지 알려 준다. */
+/* 맞는 글이면 { item, added }를, 아니면 null을 돌려준다.
+   태그가 이미 20개라 붙일 수 없으면 { full:true }만 돌려주고 표시를 남기지 않는다. 자리가 나면 다시 시도할 수 있다. */
 function applyRuleTo(rule, item) {
   const mark = ruleMark(rule);
   const applied = Array.isArray(item.ruleApplied) ? item.ruleApplied : [];
   if (!rule.tag || applied.includes(mark) || !ruleMatches(rule, item)) return null;
   const tags = item.tags || [];
-  const added = !tags.includes(rule.tag) && tags.length < 20;
-  return { added, item: { ...item, tags: added ? [...tags, rule.tag] : tags, ruleApplied: [...applied, mark].slice(-200), orgAt:new Date().toISOString() } };
+  const added = !tags.includes(rule.tag);
+  if (added && tags.length >= RULE_TAG_LIMIT) return { full:true, added:false, item:null };
+  return { added, full:false, item: { ...withTags(item, added ? [...tags, rule.tag] : tags), ruleApplied: [...applied, mark].slice(-200), orgAt:new Date().toISOString() } };
 }
 async function getRules() {
   try { return (await getAll('smartRules')).map(rule => { try { return normalizeRule(rule); } catch { return null; } }).filter(Boolean); }
@@ -154,9 +181,10 @@ async function deleteRule(id) {
   });
 }
 
-/* 기존 글에 규칙을 적용한다. 되돌리기에 쓸 수 있도록 표시만 남긴 글과 태그를 붙인 글을 따로 돌려준다. */
+/* 기존 글에 규칙을 적용한다. marked는 표시를 남긴 글, added는 태그를 새로 붙인 글, full은 태그가 가득 차 건너뛴 글이다.
+   added에는 적용 직후의 태그 목록을 함께 남겨, 되돌릴 때 그 뒤로 태그가 바뀐 글은 건드리지 않는다. */
 async function applyRuleToPosts(rule, keys) {
-  const marked = [], added = [];
+  const marked = [], added = [], full = [];
   const at = new Date().toISOString();
   await withTransaction(['posts','tags'], 'readwrite', tx => {
     const store = tx.objectStore('posts');
@@ -166,16 +194,19 @@ async function applyRuleToPosts(rule, keys) {
       request.onsuccess = () => {
         const result = request.result && applyRuleTo(rule, request.result);
         if (!result) return;
+        if (result.full) { full.push(key); return; }
         store.put(result.item);
         marked.push(key);
-        if (result.added) added.push(key);
+        if (result.added) added.push({ key, rev:result.item.tagRev });
       };
     }
   });
-  return { marked, added };
+  return { marked, added, full };
 }
+/* 적용 뒤로 태그가 바뀌지 않은 글에서만 태그를 뗀다. 바뀐 글은 사용자가 손댄 것이라 태그와 표시를 그대로 둔다. */
 async function undoRuleApply(mark, tag, marked, added) {
-  const addedSet = new Set(added);
+  const snapshot = new Map(added.map(entry => [entry.key, entry.rev]));
+  let removed = 0, kept = 0;
   await withTransaction('posts', 'readwrite', tx => {
     const store = tx.objectStore('posts');
     for (const key of marked) {
@@ -183,10 +214,20 @@ async function undoRuleApply(mark, tag, marked, added) {
       request.onsuccess = () => {
         const item = request.result;
         if (!item) return;
-        store.put({ ...item, tags: addedSet.has(key) ? (item.tags || []).filter(name => name !== tag) : item.tags, ruleApplied: (item.ruleApplied || []).filter(value => value !== mark), orgAt:new Date().toISOString() });
+        const applied = item.ruleApplied || [];
+        if (!applied.includes(mark)) return;
+        let tags = item.tags || [];
+        if (snapshot.has(key)) {
+          if ((item.tagRev || 0) !== snapshot.get(key)) { kept++; return; }
+          removed++;
+          store.put({ ...withTags(item, tags.filter(name => name !== tag)), ruleApplied: applied.filter(value => value !== mark), orgAt:new Date().toISOString() });
+          return;
+        }
+        store.put({ ...item, ruleApplied: applied.filter(value => value !== mark), orgAt:new Date().toISOString() });
       };
     }
   });
+  return { removed, kept };
 }
 
 /* 새 태그 이름을 태그 목록에 등록한다. 이미 있으면 색과 메모를 유지한다. */
@@ -212,7 +253,7 @@ async function savePosts(account, collection, items, mode = 'manual') {
         // 새로 가져오거나 저장한 글에 자동 태그 규칙을 적용한다.
         for (const rule of rules) {
           const result = applyRuleTo(rule, record);
-          if (!result) continue;
+          if (!result || result.full) continue;
           record = result.item;
           if (result.added) registerTags(tagStore, [rule.tag], at);
         }
@@ -250,7 +291,7 @@ async function importPosts(items) {
         const tags = [...new Set([...(existing.tags || []), ...(item.tags || [])])].slice(0,20);
         registerTags(tagStore, tags, at);
         const ruleApplied = [...new Set([...(existing.ruleApplied || []), ...(item.ruleApplied || [])])].slice(-200);
-        store.put({ ...existing, avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, tags, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '', orgAt:at });
+        store.put({ ...withTags(existing, tags), avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '', orgAt:at });
       };
     }
   });
@@ -270,7 +311,7 @@ async function updateTags(key, tags) {
   await withTransaction('posts', 'readwrite', tx => {
     const store = tx.objectStore('posts');
     const request = store.get(key);
-    request.onsuccess = () => { if (request.result) store.put({ ...request.result, tags, orgAt:new Date().toISOString() }); };
+    request.onsuccess = () => { if (request.result) store.put({ ...withTags(request.result, tags), orgAt:new Date().toISOString() }); };
   });
 }
 
@@ -281,7 +322,7 @@ async function updateOrganization(key, tags, note) {
     registerTags(tx.objectStore('tags'), tags, at);
     const request = store.get(key);
     request.onsuccess = () => {
-      if (request.result) store.put({ ...request.result, tags, note, orgAt:at });
+      if (request.result) store.put({ ...withTags(request.result, tags), note, orgAt:at });
     };
   });
 }
@@ -304,7 +345,7 @@ async function updateManyPosts(keys, tags, readingState) {
       request.onsuccess = () => {
         const old = request.result;
         if (!old) return;
-        const next = { ...old, tags:[...new Set([...(old.tags || []), ...tags])].slice(0,20), orgAt:at };
+        const next = { ...withTags(old, [...new Set([...(old.tags || []), ...tags])].slice(0,20)), orgAt:at };
         if (readingState !== 'keep') next.readingState = readingState;
         store.put(next);
       };
@@ -334,7 +375,7 @@ async function renameTagEverywhere(from, to) {
       const marks = Array.isArray(cursor.value.ruleApplied) ? cursor.value.ruleApplied : [];
       if (tags.includes(from) || marks.some(mark => renameMark(mark) !== mark)) {
         const next = [...new Set(tags.map(tag => (tag === from ? to : tag)))].slice(0,20);
-        cursor.update({ ...cursor.value, tags:next, ruleApplied:[...new Set(marks.map(renameMark))], orgAt:at });
+        cursor.update({ ...withTags(cursor.value, next), ruleApplied:[...new Set(marks.map(renameMark))], orgAt:at });
       }
       cursor.continue();
     };
@@ -358,7 +399,7 @@ async function removeTagEverywhere(name) {
       const cursor = event.target.result;
       if (!cursor) return;
       const tags = Array.isArray(cursor.value.tags) ? cursor.value.tags : [];
-      if (tags.includes(name)) cursor.update({ ...cursor.value, tags:tags.filter(tag => tag !== name), orgAt:at });
+      if (tags.includes(name)) cursor.update({ ...withTags(cursor.value, tags.filter(tag => tag !== name)), orgAt:at });
       cursor.continue();
     };
   });

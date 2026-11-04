@@ -170,6 +170,7 @@ async function refresh() {
   people = await getAll('people');
   tagMeta = await getAll('tags');
   smartRules = await getRules();
+  rulePostsCache.clear();
   if (activeRuleId && !smartRules.some(rule => rule.id === activeRuleId)) activeRuleId = '';
   tagColors = new Map(tagMeta.map(meta => [meta.name, safeColor(meta.color)]));
   renderSourceFilters();
@@ -309,8 +310,25 @@ function activeFilterCount() {
   return count;
 }
 
+/* 펼친 글은 다시 그려도 펼친 채로 둔다. 이 기기의 화면 상태일 뿐이라 저장하지 않는다. */
+const expandedKeys = new Set();
+const textId = key => key.replace(/[^a-zA-Z0-9_-]/g, '_');
+/* 본문이 카드 높이를 넘는지 재서 "展开全文" 버튼을 보이거나 숨긴다. 글자 수가 아니라 실제 높이로 판단해 보기 방식마다 맞게 동작한다. */
+function measureCardText(texts = $('#cards').querySelectorAll('.post-text')) {
+  for (const text of texts) {
+    const button = text.nextElementSibling;
+    if (!button?.classList.contains('expand-text') || text.classList.contains('expanded')) continue;
+    const overflow = text.scrollHeight > text.clientHeight + 1;
+    text.classList.toggle('truncated', overflow);
+    button.hidden = !overflow;
+  }
+}
+let measureTimer = 0;
+window.addEventListener('resize', () => { clearTimeout(measureTimer); measureTimer = setTimeout(() => measureCardText(), 150); });
+
 function cardHTML(group, terms) {
   const item = group[0];
+  const expanded = expandedKeys.has(item.key);
   const keys = group.map(post => post.key);
   const keyData = escapeHTML(JSON.stringify(keys));
   const allSelected = keys.every(key => selectedKeys.has(key));
@@ -344,7 +362,8 @@ function cardHTML(group, terms) {
 <div class="identity"><strong>${escapeHTML(item.author || item.username)}</strong><span>@${escapeHTML(item.username)}<em>保存账号 @${escapeHTML(item.accountName || item.account || 'legacy')}</em></span></div>
 <span class="pill" data-kind="${escapeHTML(item.collection)}">${kindMarks[item.collection] || escapeHTML(item.collection)}</span>
 </div>${duplicateNote}
-<p class="post-text">${highlightText(item.text || '(未能获取正文)', terms)}</p>
+<p class="post-text${expanded ? ' expanded' : ''}" id="text-${escapeHTML(textId(item.key))}">${highlightText(item.text || '(未能获取正文)', terms)}</p>
+<button type="button" class="expand-text" data-key="${escapeHTML(item.key)}" aria-controls="text-${escapeHTML(textId(item.key))}" aria-expanded="${expanded}"${expanded ? '' : ' hidden'}>${expanded ? '收起' : '展开全文'}</button>
 ${item.note ? `<p class="post-note">备注：${highlightText(item.note, terms)}</p>` : ''}
 ${item.imageUrls?.[0] ? `<img class="preview" src="${escapeHTML(item.imageUrls[0])}" alt="帖子图片" loading="lazy">` : ''}
 ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
@@ -369,10 +388,6 @@ function render() {
   $('#subtitle').textContent = rule ? describeRule(rule) : subtitles[view];
   $('#editRule').hidden = !rule;
   updateApplyRuleButton(rule);
-  $('#allCount').textContent = posts.length;
-  $('#bookmarkCount').textContent = posts.filter(item => item.collection === 'bookmark').length;
-  $('#likeCount').textContent = posts.filter(item => item.collection === 'like').length;
-  $('#savedCount').textContent = posts.filter(item => item.collection === 'saved').length;
   $('#peopleCount').textContent = people.length;
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', !rule && button.dataset.view === view));
   updateRailActive();
@@ -463,6 +478,7 @@ function showMoreCards() {
   const next = renderedGroups.slice(shownCount, shownCount + RENDER_BATCH);
   shownCount += next.length;
   cards.insertAdjacentHTML('beforeend', next.map(group => cardHTML(group, renderedTerms)).join(''));
+  measureCardText([...cards.querySelectorAll('.post-text')].slice(-next.length));
   for (const input of [...cards.querySelectorAll('.post-select')].slice(-next.length)) {
     const keys = JSON.parse(input.dataset.keys);
     input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
@@ -486,21 +502,39 @@ function ruleTextOf(item) {
   return text;
 }
 function activeRule() { return activeRuleId ? smartRules.find(rule => rule.id === activeRuleId) || null : null; }
-function rulePosts(rule) { return posts.filter(item => ruleMatches(rule, item, ruleTextOf(item))); }
+/* 규칙별 결과를 posts 배열과 규칙 객체가 그대로인 동안 재사용한다. refresh()가 둘 중 하나를 새로 만들면 자연히 다시 계산된다. */
+const rulePostsCache = new Map();
+function rulePosts(rule) {
+  const cached = rulePostsCache.get(rule.id);
+  if (cached && cached.posts === posts && cached.rule === rule) return cached.list;
+  const list = posts.filter(item => ruleMatches(rule, item, ruleTextOf(item)));
+  // 대화상자 미리보기용 임시 규칙은 담아 두지 않는다.
+  if (smartRules.includes(rule)) rulePostsCache.set(rule.id, { posts, rule, list });
+  return list;
+}
 function describeRule(rule) {
   const parts = [];
   if (rule.keywords.length) parts.push(`${rule.match === 'all' ? '包含全部' : '包含任一'}：${rule.keywords.join('、')}`);
   if (rule.authors.length) parts.push(`作者：${rule.authors.map(handle => '@' + handle).join('、')}`);
   if (rule.exclude.length) parts.push(`排除：${rule.exclude.join('、')}`);
+  const filters = ruleFilterText(rule);
+  if (filters) parts.push(`条件：${filters}`);
   if (rule.tag) parts.push(`自动添加标签「${rule.tag}」`);
   return parts.join(' · ');
 }
-/* 아직 이 규칙이 적용되지 않은(표시가 없는) 맞는 글 */
-function pendingRulePosts(rule) {
+/* has:/-has:/-from: 조건을 검색어 형태로 보여 준다. 대화상자의 "附加条件" 칸과 같은 형식이다. */
+function ruleFilterText(rule) {
+  return [...(rule.has || []).map(flag => `has:${flag}`), ...(rule.notHas || []).map(flag => `-has:${flag}`), ...(rule.notAuthors || []).map(handle => `-from:${handle}`)].join(' ');
+}
+/* 아직 이 규칙이 적용되지 않은(표시가 없는) 맞는 글. 태그가 가득 차 붙일 수 없는 글은 따로 센다. */
+const ruleTagFull = (rule, item) => !(item.tags || []).includes(rule.tag) && (item.tags || []).length >= RULE_TAG_LIMIT;
+function unmarkedRulePosts(rule) {
   if (!rule?.tag) return [];
   const mark = ruleMark(rule);
   return rulePosts(rule).filter(item => !(item.ruleApplied || []).includes(mark));
 }
+function pendingRulePosts(rule) { return unmarkedRulePosts(rule).filter(item => !ruleTagFull(rule, item)); }
+function fullRulePosts(rule) { return unmarkedRulePosts(rule).filter(item => ruleTagFull(rule, item)); }
 function updateApplyRuleButton(rule) {
   const pending = rule ? pendingRulePosts(rule).length : 0;
   $('#applyRule').hidden = !pending;
@@ -516,16 +550,34 @@ function renderRail() {
     ? [...smartRules].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')).map(rule => railItem('rule', rule.id, rule.name, rulePosts(rule).length, describeRule(rule))).join('')
     : '<p class="rail-empty">按关键词或作者自动归类。<button type="button" data-action="new-rule">新建分类</button></p>';
 
-  const authorCounts = new Map();
+  // 모음·작성자·저장 계정·정리 항목 수를 한 번에 센다.
+  const authorCounts = new Map(), accountCounts = new Map();
+  const collectionCounts = { bookmark:0, like:0, saved:0 };
+  let untagged = 0, later = 0;
   for (const item of posts) {
-    if (!item.username) continue;
-    const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
-    entry.count++;
-    authorCounts.set(item.username, entry);
+    if (item.collection in collectionCounts) collectionCounts[item.collection]++;
+    if (!(item.tags || []).length) untagged++;
+    if (item.readingState === 'later') later++;
+    if (item.username) {
+      const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
+      entry.count++;
+      authorCounts.set(item.username, entry);
+    }
+    const account = item.account || 'legacy';
+    const accountEntry = accountCounts.get(account) || { count:0, name:account };
+    accountEntry.count++;
+    if (item.accountName) accountEntry.name = item.accountName;
+    accountCounts.set(account, accountEntry);
   }
   $('#statPosts').textContent = posts.length.toLocaleString('zh-CN');
   $('#statAuthors').textContent = authorCounts.size.toLocaleString('zh-CN');
   $('#statTags').textContent = tagCounts().size.toLocaleString('zh-CN');
+  $('#allCount').textContent = posts.length;
+  $('#bookmarkCount').textContent = collectionCounts.bookmark;
+  $('#likeCount').textContent = collectionCounts.like;
+  $('#savedCount').textContent = collectionCounts.saved;
+  $('#todoList').innerHTML = railItem('todo', 'untagged', '待整理', untagged, '还没有任何标签的帖子')
+    + railItem('todo', 'later', '稍后读', later, '标记为稍后读的帖子');
   const authors = [...authorCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
   const limit = authorExpanded ? 40 : 8;
   $('#authorGroup').hidden = !authors.length;
@@ -534,14 +586,6 @@ function renderRail() {
   $('#authorMore').textContent = authorExpanded ? '收起' : `更多 ${Math.min(authors.length, 40) - 8}`;
   $('#authorMore').setAttribute('aria-expanded', String(authorExpanded));
 
-  const accountCounts = new Map();
-  for (const item of posts) {
-    const account = item.account || 'legacy';
-    const entry = accountCounts.get(account) || { count:0, name:account };
-    entry.count++;
-    if (item.accountName) entry.name = item.accountName;
-    accountCounts.set(account, entry);
-  }
   $('#accountGroup').hidden = accountCounts.size < 2;
   $('#accountList').innerHTML = [...accountCounts.entries()].sort((a, b) => b[1].count - a[1].count)
     .map(([account, entry]) => railItem('account', account, '@' + entry.name, entry.count)).join('');
@@ -551,7 +595,9 @@ function updateRailActive() {
   const author = $('#authorFilter').value, account = $('#accountFilter').value;
   document.querySelectorAll('.rail-item').forEach(item => {
     const { kind, value } = item.dataset;
-    const on = kind === 'rule' ? value === activeRuleId : kind === 'author' ? value === author : value === account;
+    const on = kind === 'rule' ? value === activeRuleId
+      : kind === 'todo' ? (value === 'untagged' ? $('#untaggedOnly').checked : $('#readFilter').value === 'later')
+      : kind === 'author' ? value === author : value === account;
     item.classList.toggle('active', on);
     item.setAttribute('aria-pressed', String(on));
   });
@@ -566,6 +612,9 @@ document.querySelector('.rail-groups').addEventListener('click', event => {
   if (kind === 'rule') {
     activeRuleId = activeRuleId === value ? '' : value;
     if (activeRuleId) view = 'all';
+  } else if (kind === 'todo') {
+    if (value === 'untagged') $('#untaggedOnly').checked = !$('#untaggedOnly').checked;
+    else $('#readFilter').value = $('#readFilter').value === 'later' ? 'all' : 'later';
   } else {
     const select = $(kind === 'author' ? '#authorFilter' : '#accountFilter');
     select.value = select.value === value ? 'all' : value;
@@ -584,19 +633,37 @@ function ruleFromForm() {
     match: document.querySelector('input[name="ruleMatch"]:checked')?.value,
     exclude: $('#ruleExclude').value,
     authors: $('#ruleAuthors').value,
+    ...parseRuleFilters($('#ruleFilters').value),
     tag: $('#ruleTag').value,
     createdAt: smartRules.find(rule => rule.id === editingRuleId)?.createdAt
   };
 }
+/* "附加条件" 칸을 읽는다. 규칙이 저장할 수 없는 조건이 있으면 오류로 알려 준다. */
+function parseRuleFilters(value) {
+  const parsed = parseQuery(value);
+  const unsupported = [
+    ...parsed.include, ...parsed.exclude.map(term => '-' + term), ...parsed.from.map(handle => 'from:' + handle),
+    ...parsed.tag.map(tag => 'tag:' + tag), ...parsed.notTag.map(tag => '-tag:' + tag),
+    ...parsed.is.map(state => 'is:' + state), ...parsed.notIs.map(state => '-is:' + state),
+    ...[...parsed.has, ...parsed.notHas].filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => 'has:' + flag)
+  ];
+  if (unsupported.length) throw new Error(`附加条件只支持 has:image / video / media / link、对应的 -has:，以及 -from:作者。无法使用：${unsupported.join(' ')}`);
+  return { has:parsed.has, notHas:parsed.notHas, notAuthors:parsed.notFrom };
+}
 function updateRulePreview() {
   let rule;
   try { rule = normalizeRule({ ...ruleFromForm(), name: $('#ruleName').value.trim() || '预览' }); }
-  catch { $('#rulePreview').innerHTML = '<span class="muted">填写关键词或作者后，这里会显示命中的帖子。</span>'; return; }
+  catch (error) {
+    $('#rulePreview').innerHTML = /附加条件/.test(error.message) ? `<span class="error-text">${escapeHTML(error.message)}</span>` : '<span class="muted">填写关键词、作者或 has: 条件后，这里会显示命中的帖子。</span>';
+    return;
+  }
   const matches = rulePosts(rule);
   const pending = rule.tag ? pendingRulePosts(rule).length : 0;
+  const full = rule.tag ? fullRulePosts(rule).length : 0;
   const sample = matches.slice(0, 4).map(item => `<li><b>${escapeHTML(item.author || item.username)}</b>：${escapeHTML((item.text || '').replace(/\s+/g, ' ').slice(0, 80))}</li>`).join('');
   $('#rulePreview').innerHTML = `命中 <strong>${matches.length.toLocaleString('zh-CN')}</strong> 条帖子`
     + (rule.tag ? `，其中 ${pending.toLocaleString('zh-CN')} 条保存后可以补上「${escapeHTML(rule.tag)}」标签` : '')
+    + (full ? `，${full.toLocaleString('zh-CN')} 条已有 ${RULE_TAG_LIMIT} 个标签，暂时加不上` : '')
     + (sample ? `<ul>${sample}</ul>` : '');
 }
 function openRuleDialog(rule = null, prefill = {}) {
@@ -607,6 +674,9 @@ function openRuleDialog(rule = null, prefill = {}) {
   $('#ruleKeywords').value = (source.keywords || []).join(', ');
   $('#ruleExclude').value = (source.exclude || []).join(', ');
   $('#ruleAuthors').value = (source.authors || []).map(handle => '@' + handle).join(', ');
+  $('#ruleFilters').value = ruleFilterText(source);
+  $('#ruleWarning').hidden = !source.warning;
+  $('#ruleWarning').textContent = source.warning || '';
   $('#ruleTag').value = source.tag || '';
   document.querySelector(`input[name="ruleMatch"][value="${source.match === 'all' ? 'all' : 'any'}"]`).checked = true;
   $('#deleteRuleButton').hidden = !rule;
@@ -618,12 +688,31 @@ $('#ruleForm').addEventListener('input', updateRulePreview);
 $('#cancelRule').addEventListener('click', () => $('#ruleDialog').close());
 $('#newRule').addEventListener('click', () => openRuleDialog());
 $('#editRule').addEventListener('click', () => { const rule = activeRule(); if (rule) openRuleDialog(rule); });
+/* 검색 조건을 규칙으로 옮긴다. 옮길 수 없는 조건(태그·읽음 상태 등)은 대화상자에서 분명히 알린다. */
+function ruleFromSearch(query, author = 'all') {
+  const parsed = parseQuery(query);
+  const validHandle = handle => /^[a-z0-9_]{1,15}$/.test(handle);
+  const authors = [...parsed.from, ...(author !== 'all' ? [author] : [])];
+  const has = parsed.has.filter(flag => RULE_HAS_FLAGS.includes(flag));
+  const notHas = parsed.notHas.filter(flag => RULE_HAS_FLAGS.includes(flag));
+  const dropped = [
+    ...authors.filter(handle => !validHandle(handle)).map(handle => 'from:' + handle),
+    ...parsed.notFrom.filter(handle => !validHandle(handle)).map(handle => '-from:' + handle),
+    ...parsed.tag.map(tag => 'tag:' + tag), ...parsed.notTag.map(tag => '-tag:' + tag),
+    ...parsed.is.map(state => 'is:' + state), ...parsed.notIs.map(state => '-is:' + state),
+    ...parsed.has.filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => 'has:' + flag),
+    ...parsed.notHas.filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => '-has:' + flag)
+  ];
+  return {
+    keywords:parsed.include, exclude:parsed.exclude, authors:authors.filter(validHandle), notAuthors:parsed.notFrom.filter(validHandle), has, notHas, match:'all',
+    warning: dropped.length ? `智能分类不支持这些搜索条件，已忽略：${dropped.join(' ')}。分类结果可能比当前搜索多。` : ''
+  };
+}
 $('#searchToRule').addEventListener('click', () => {
-  const parsed = parseQuery($('#search').value.trim());
   const author = $('#authorFilter').value;
-  const authors = [...parsed.from, ...(author !== 'all' ? [author] : [])].filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
-  const name = parsed.include[0] || (author !== 'all' ? $('#authorFilter').selectedOptions[0]?.textContent.split(' · ')[0] : '') || '';
-  openRuleDialog(null, { name, keywords:parsed.include, exclude:parsed.exclude, authors, match:'all' });
+  const prefill = ruleFromSearch($('#search').value.trim(), author);
+  const name = prefill.keywords[0] || (author !== 'all' ? $('#authorFilter').selectedOptions[0]?.textContent.split(' · ')[0] : '') || '';
+  openRuleDialog(null, { ...prefill, name });
 });
 $('#ruleForm').addEventListener('submit', async event => {
   event.preventDefault();
@@ -656,12 +745,20 @@ async function applyActiveRule() {
   const pending = pendingRulePosts(rule);
   if (!rule || !pending.length) return;
   try {
-    const { marked, added } = await applyRuleToPosts(rule, pending.map(item => item.key));
+    const { marked, added, full } = await applyRuleToPosts(rule, pending.map(item => item.key));
     await refresh();
-    notice(`已为 ${added.length.toLocaleString('zh-CN')} 条帖子添加「${rule.tag}」标签${marked.length > added.length ? `（${marked.length - added.length} 条原本已有）` : ''}。`, false, {
+    const extra = [
+      marked.length > added.length ? `${marked.length - added.length} 条原本已有` : '',
+      full.length ? `${full.length} 条已有 ${RULE_TAG_LIMIT} 个标签，未添加，腾出位置后可以再试` : ''
+    ].filter(Boolean).join('；');
+    notice(`已为 ${added.length.toLocaleString('zh-CN')} 条帖子添加「${rule.tag}」标签${extra ? `（${extra}）` : ''}。`, false, {
       label:'撤销',
       run: async () => {
-        try { await undoRuleApply(ruleMark(rule), rule.tag, marked, added); await refresh(); notice(`已撤销，移除了这次添加的 ${added.length} 个「${rule.tag}」标签。`); }
+        try {
+          const { removed, kept } = await undoRuleApply(ruleMark(rule), rule.tag, marked, added);
+          await refresh();
+          notice(`已撤销，移除了这次添加的 ${removed} 个「${rule.tag}」标签${kept ? `；${kept} 条帖子之后改过标签，已保留不动` : ''}。`);
+        }
         catch (error) { notice(`撤销失败：${error.message}`, true); }
       }
     });
@@ -1015,6 +1112,19 @@ async function checkOriginalPost(key, button) {
 }
 
 $('#cards').addEventListener('click', async event => {
+  const expandButton = event.target.closest('.expand-text');
+  if (expandButton) {
+    const text = expandButton.previousElementSibling;
+    const expand = !text.classList.contains('expanded');
+    if (expand) expandedKeys.add(expandButton.dataset.key); else expandedKeys.delete(expandButton.dataset.key);
+    text.classList.toggle('expanded', expand);
+    text.classList.toggle('truncated', !expand);
+    expandButton.textContent = expand ? '收起' : '展开全文';
+    expandButton.setAttribute('aria-expanded', String(expand));
+    // 긴 글을 접으면 카드 윗부분이 화면 밖으로 밀려날 수 있어 다시 보이게 한다.
+    if (!expand) { const card = expandButton.closest('.card'); if (card.getBoundingClientRect().top < 0) card.scrollIntoView({ block:'start' }); }
+    return;
+  }
   const tagChip = event.target.closest('.card-tag');
   if (tagChip) {
     const tag = tagChip.dataset.tag;
@@ -1291,6 +1401,23 @@ $('#exportCsvButton').addEventListener('click', () => {
 });
 
 $('#importButton').addEventListener('click', () => $('#importFile').click());
+
+/* 백업·내보내기 메뉴: 항목을 누르거나 바깥을 누르거나 Esc를 누르면 닫는다. */
+function setIOMenu(open, focusButton = false) {
+  $('#ioMenu').hidden = !open;
+  $('#ioMenuButton').setAttribute('aria-expanded', String(open));
+  if (open) $('#ioMenu').querySelector('button').focus();
+  else if (focusButton) $('#ioMenuButton').focus();
+}
+$('#ioMenuButton').addEventListener('click', () => setIOMenu($('#ioMenu').hidden));
+$('#ioMenu').addEventListener('click', event => { if (event.target.closest('button')) setIOMenu(false); });
+$('#ioMenu').addEventListener('keydown', event => {
+  const items = [...$('#ioMenu').querySelectorAll('button')];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') { event.preventDefault(); setIOMenu(false, true); }
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+});
+document.addEventListener('click', event => { if (!$('#ioMenu').hidden && !event.target.closest('.io-actions')) setIOMenu(false); });
 $('#importFile').addEventListener('change', async event => {
   const file = event.target.files?.[0];
   if (!file) return;

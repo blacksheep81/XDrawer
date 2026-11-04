@@ -78,6 +78,8 @@ function pureTests() {
   check('rescan text wins but newer tags survive', r1.text === 'new' && r1.tags.join() === 'x' && r1.savedAt === T(0) && r1.updatedAt === T(9) && r1.orgAt === T(5), JSON.stringify(r1));
   const r2 = mergePost({ ...base, tags:['b','a'], note:'long note', readingState:'later', ruleApplied:['r1:a'] }, { ...base, tags:['c','a'], note:'n', readingState:'read', ruleApplied:['r2:c'] });
   check('legacy tie unions tags and rule marks', r2.tags.join() === 'a,b,c' && r2.note === 'long note' && r2.readingState === 'read' && r2.ruleApplied.join() === 'r1:a,r2:c', JSON.stringify(r2));
+  const rev = [mergePost({ ...base, tags:['x'], tagRev:3, orgAt:T(5) }, { ...base, tags:['y'], tagRev:1, orgAt:T(2) }), mergePost({ ...base, tags:['y'], tagRev:1, orgAt:T(2) }, { ...base, tags:['x'], tagRev:3, orgAt:T(5) })];
+  check('tagRev travels with tags and merges the same both ways', rev[0].tagRev === 3 && rev[1].tagRev === 3 && rev[0].tags.join() === 'x', JSON.stringify(rev));
   const r3 = mergePost({ ...base, tags:['auto'], ruleApplied:['r:auto'], orgAt:T(1) }, { ...base, tags:[], ruleApplied:['r:auto'], orgAt:T(2) });
   check('removing a rule tag later is respected', r3.tags.length === 0 && r3.ruleApplied.join() === 'r:auto', JSON.stringify(r3));
   // Random pairs: order must not matter, and merging again must change nothing.
@@ -206,7 +208,7 @@ async function e2e() {
   await putRule({ id:'r-1', name:'rule', keywords:['text'], tag:'auto' });
   const key3 = 'me:bookmark:3';
   const applied = await applyRuleToPosts((await getRules()).find(r => r.id === 'r-1'), [key3]);
-  check('rule applies locally', applied.added.join() === key3, JSON.stringify(applied));
+  check('rule applies locally', applied.added.map(entry => entry.key).join() === key3, JSON.stringify(applied));
   await runSync();
   await use('A'); await runSync();
   p = (await getAll('posts')).find(x => x.key === key3);

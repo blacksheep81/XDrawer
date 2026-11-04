@@ -35,7 +35,7 @@ function newerRecord(a, b, clock) {
 const READING_RANK = { none:0, later:1, read:2 };
 const greaterText = (a, b) => (String(a || '') >= String(b || '') ? a : b);
 
-const POST_META_FIELDS = new Set(['tags','ruleApplied','note','readingState','linkStatus','checkedAt','updatedAt','orgAt','savedAt']);
+const POST_META_FIELDS = new Set(['tags','ruleApplied','note','readingState','linkStatus','checkedAt','updatedAt','orgAt','savedAt','tagRev']);
 const postContent = item => stable(Object.fromEntries(Object.entries(item).filter(([field]) => !POST_META_FIELDS.has(field))));
 
 /* 본문(updatedAt)과 정리 정보(orgAt)를 따로 비교한다. 다시 가져오기가 다른 기기의 태그를 덮어쓰지 않게 한다. */
@@ -56,6 +56,8 @@ function mergePost(a, b) {
     merged.linkStatus = checked.linkStatus;
     merged.checkedAt = checked.checkedAt;
   }
+  const tagRev = Math.max(a.tagRev || 0, b.tagRev || 0);
+  if (tagRev) merged.tagRev = tagRev; else delete merged.tagRev;
   merged.updatedAt = ts(a.updatedAt) >= ts(b.updatedAt) ? a.updatedAt : b.updatedAt;
   merged.orgAt = ts(a.orgAt) >= ts(b.orgAt) ? a.orgAt : b.orgAt;
   const saved = [a.savedAt, b.savedAt].filter(Boolean).sort((x, y) => ts(x) - ts(y) || (x < y ? -1 : 1));
