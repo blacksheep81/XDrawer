@@ -46,7 +46,12 @@ async function xRequest(operation, variables, session) {
     }
   });
   if (response.status === 401 || response.status === 403) throw new Error('X 登录会话已过期或请求被拒绝。');
-  if (response.status === 429) throw new Error('已触发 X 请求限制，请稍后重试。');
+  if (response.status === 429) {
+    const error = new Error('已触发 X 请求限制，请稍后重试。');
+    const reset = Number(response.headers.get('x-rate-limit-reset'));
+    error.retryAt = reset ? reset * 1000 : Date.now() + 15 * 60000;
+    throw error;
+  }
   if (!response.ok) throw new Error(`X 网页请求失败（${response.status}）。请求格式可能已变更。`);
   return response.json();
 }

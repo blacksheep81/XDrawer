@@ -797,13 +797,30 @@ $('#cards').addEventListener('click', async event => {
 /* ── 가져오기(스캔) ──────────────────────────── */
 $('#pauseScan').addEventListener('click', () => { scanPaused = true; $('#scanProgressText').textContent = '将在当前步骤后停止…'; });
 
+/* "전체"는 빠른 탐색과 함께 쓸 수 없으므로 처음부터 탐색으로 고정한다. */
+$('#rounds').addEventListener('change', () => {
+  const readAll = $('#rounds').value === 'all';
+  if (readAll) $('#scanMode').value = 'full';
+  $('#scanMode').disabled = readAll;
+  $('#readAllHint').hidden = !readAll;
+});
+
+/* X 요청 제한이 풀릴 때까지 기다린다. 중단을 누르면 바로 돌아온다. */
+async function waitForRateLimit(retryAt, progress) {
+  const until = Math.max(retryAt, Date.now()) + 5000;
+  const resume = new Date(until).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' });
+  $('#scanProgressText').textContent = `${progress}。已触发 X 请求限制，将在 ${resume} 自动继续，请勿关闭此页面`;
+  while (Date.now() < until && !scanPaused) await new Promise(resolve => setTimeout(resolve, 1000));
+}
+
 async function runWebScan() {
   $('#scanButton').disabled = true;
   $('#scanProgress').hidden = false;
   scanPaused = false;
   const collection = $('#collection').value;
-  const mode = $('#scanMode').value;
-  const maxPages = Number($('#rounds').value) + 1;
+  const readAll = $('#rounds').value === 'all';
+  const mode = readAll ? 'full' : $('#scanMode').value;
+  const maxPages = readAll ? Infinity : Number($('#rounds').value) + 1;
   let pages = 0, newCount = 0, account = '', reason = '已达到设置的读取范围，可能还有更早的帖子。';
   const seen = new Set();
   const cursors = new Set();
@@ -812,33 +829,48 @@ async function runWebScan() {
     account = session.account;
     const accountName = await xAccountName(session);
     const known = new Set(posts.filter(post => post.account === account && post.collection === collection).map(post => post.id));
-    let cursor = null, knownPages = 0;
+    let cursor = null, knownPages = 0, stalePages = 0;
+    const progress = () => `${accountName ? `@${accountName}` : `账号 ${session.userId}`}：${pages} 页，确认 ${seen.size} 条，新帖 ${newCount} 条`;
     for (let page = 0; page < maxPages && !scanPaused; page++) {
       const currentSession = await xSession();
       if (currentSession.userId !== session.userId) throw new Error('同步期间 X 账号发生了变化。');
-      const result = await xReadPage(collection, session, cursor);
+      let result = null;
+      for (let attempt = 1; !result; attempt++) {
+        try { result = await xReadPage(collection, session, cursor); }
+        catch (error) {
+          if (!readAll || !error.retryAt || attempt >= 5) throw error;
+          await waitForRateLimit(error.retryAt, progress());
+          if (scanPaused) break;
+        }
+      }
+      if (!result) break;
       const items = result.items.map(item => normalizePost({ ...item, account, accountName:accountName || '', collection, key:`${account}:${collection}:${item.id}` }));
-      let fresh = 0;
+      let fresh = 0, unseen = 0;
       for (const item of items) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
+        unseen++;
         if (!known.has(item.id)) { newCount++; fresh++; }
       }
       if (items.length) await savePosts(account, collection, items, mode);
       pages++;
-      $('#scanProgressText').textContent = `${accountName ? `@${accountName}` : `账号 ${session.userId}`}：${pages} 页，确认 ${seen.size} 条，新帖 ${newCount} 条`;
+      $('#scanProgressText').textContent = progress();
       if (result.warnings.length) throw new Error(result.warnings.join('; '));
       knownPages = fresh ? 0 : knownPages + 1;
+      stalePages = unseen ? 0 : stalePages + 1;
       if (!result.cursor || cursors.has(result.cursor)) { reason = '已检查到最后一页。'; break; }
       if (mode === 'incremental' && page >= 2 && knownPages >= 2) { reason = '连续出现已有帖子，已停止快速同步。'; break; }
+      // 전체 읽기에는 페이지 상한이 없으므로, 끝에서 빈 페이지만 이어져도 멈추게 한다.
+      if (readAll && stalePages >= 5) { reason = '连续 5 页没有新内容，已视为读到最后。'; break; }
       cursors.add(result.cursor);
       cursor = result.cursor;
+      if (readAll) await new Promise(resolve => setTimeout(resolve, 1000));
     }
     await refresh();
     notice(`${accountName ? `@${accountName}` : `账号 ${session.userId}`}：在 ${pages} 页中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : reason}`, !seen.size);
   } catch (error) {
     await refresh();
-    notice(`网页同步已中断：${error.message}${pages ? `。已保存从 ${pages} 页读取的帖子。` : ''}`, true);
+    notice(`网页同步已中断：${error.message.replace(/。$/, '')}。${pages ? `已保存从 ${pages} 页读取的帖子。` : ''}`, true);
   } finally {
     $('#scanButton').disabled = false;
     $('#scanProgress').hidden = true;
@@ -888,8 +920,9 @@ $('#scanDialog').addEventListener('close', async () => {
       if (pageAccount !== account) throw new Error('“喜欢”页面的账号与登录账号不一致。');
     }
     if (collectionForURL(before.url) !== collection) throw new Error('X 标签页的页面与所选收藏类型不一致。');
-    mode = $('#scanMode').value;
-    const maxRounds = Number($('#rounds').value);
+    const readAll = $('#rounds').value === 'all';
+    mode = readAll ? 'full' : $('#scanMode').value;
+    const maxRounds = readAll ? Infinity : Number($('#rounds').value);
     const known = new Set(posts.filter(item => item.account === account && item.collection === collection).map(item => item.id));
     const seen = new Set();
     let noNewRounds = 0, bottomRounds = 0, roundsDone = 0, newCount = 0;
