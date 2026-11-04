@@ -819,3 +819,12 @@ dialog .rule-mode input[type="radio"] { width: auto; margin: 0; padding: 0; acce
 .rule-preview .error-text { color: var(--bad); }
 .rule-warning { margin: 10px 0 0; padding: 9px 12px; border-left: 3px solid var(--bad); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font-size: 12.5px; line-height: 1.6; }
 .rule-warning[hidden] { display: none; }
+.move-options { display: grid; gap: 2px; max-height: 280px; overflow-y: auto; margin: 12px 0 8px; }
+dialog label.move-option { display: flex; align-items: center; gap: 9px; margin: 0; padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; font-weight: 400; color: var(--ink); cursor: pointer; }
+dialog .move-option input[type="radio"] { flex: 0 0 auto; width: auto; margin: 0; padding: 0; accent-color: var(--brass); }
+.move-option:hover { background: var(--surface-2); }
+.move-option span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-option b { font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+#moveNewName { width: 100%; margin-bottom: 8px; }
+#moveDialog .error-text { margin: 4px 0 0; color: var(--bad); font-size: 12.5px; }
+#moveDialog .error-text:empty { display: none; }

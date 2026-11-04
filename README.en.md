@@ -33,11 +33,12 @@ X Drawer is a Chrome extension that keeps your X (Twitter) bookmarks, likes and 
 **Organizing**
 - Posts can have tags (up to 20 each), notes and a read-later or read state, and you can organize many posts at once.
 - The 整理 group in the sidebar gives two shortcuts:
-  - **待整理 (to organize):** posts with no tags yet
+  - **待整理 (to organize):** posts with no tags that are not in any smart category
   - **稍后读 (read later):** posts marked to read later
 - **Smart categories** sort posts automatically. A category can match any or all of its keywords, exclude terms, limit to certain authors, and use extra conditions such as `has:image -has:link -from:someone`. Posts imported later are sorted in too.
   - A category can add a tag automatically, and you can tag the posts you already have in one batch and undo it.
   - The current search can be saved as a smart category. Conditions that depend on things you change yourself, such as `tag:` and `is:`, are left out, and the dialog says which ones.
+- **Move to category (移到分类):** select posts and click 移到分类 in the bottom bar to put them into an existing category or a new one. When you are viewing a category, the posts also leave that category. Posts added by hand stay in the category whatever its keywords are, and a move can be undone.
 - **People (人物·小号):** add aliases and notes to other people's accounts so you can recognize them.
 - You can check whether original posts are still available, and share the posts you select as links, as text with links, or as a Markdown list.
 
