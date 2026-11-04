@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>X 抽屉</title>
+<title>拾羽</title>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="popup.css">
 <script src="theme.js"></script>
@@ -10,8 +10,8 @@
 <body class="popup">
 
 <header class="pop-head">
-  <span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div class="pop-brand">X 抽屉</div>
+  <img class="brand-mark" src="icons/icon48.png" alt="">
+  <div class="pop-brand">拾羽</div>
   <div class="theme-switch compact" id="themeToggle" role="group" aria-label="界面主题">
     <button type="button" data-theme-set="system" title="跟随系统设置">◐</button>
     <button type="button" data-theme-set="light" title="浅色界面">☀</button>
@@ -34,11 +34,11 @@
 <p class="pop-latest" id="popLatest">正在读取收藏库…</p>
 
 <div class="pop-actions">
-  <button id="popOpen" class="primary" type="button">打开抽屉</button>
+  <button id="popOpen" class="primary" type="button">打开收藏库</button>
   <button id="popScan" class="ghost" type="button">从 X 导入</button>
 </div>
 
-<p class="pop-foot"><span class="status-dot"></span> 所有数据仅保存在此浏览器中</p>
+<p class="pop-foot"><span class="status-dot"></span> <span id="popPrivacy">所有数据仅保存在此浏览器中</span></p>
 
 <script src="db.js"></script>
 <script src="popup.js"></script>

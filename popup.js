@@ -28,20 +28,17 @@ function relativeDay(iso) {
 
 async function loadStats() {
   try {
-    const posts = await getAll('posts');
-    const count = collection => posts.filter(item => item.collection === collection).length;
-    $('#popAll').textContent = posts.length.toLocaleString('zh-CN');
-    $('#popBookmark').textContent = count('bookmark').toLocaleString('zh-CN');
-    $('#popLike').textContent = count('like').toLocaleString('zh-CN');
-    $('#popSaved').textContent = count('saved').toLocaleString('zh-CN');
-    if (!posts.length) {
+    const stats = await getLibraryStats();
+    $('#popAll').textContent = stats.all.toLocaleString('zh-CN');
+    $('#popBookmark').textContent = stats.bookmark.toLocaleString('zh-CN');
+    $('#popLike').textContent = stats.like.toLocaleString('zh-CN');
+    $('#popSaved').textContent = stats.saved.toLocaleString('zh-CN');
+    if (!stats.all) {
       $('#popLatest').textContent = '还没有保存的帖子。从导入开始吧。';
       return;
     }
-    const newest = posts.reduce((best, item) => (Date.parse(item.savedAt || 0) > Date.parse(best.savedAt || 0) ? item : best));
-    const when = relativeDay(newest.savedAt);
-    const tags = new Set(posts.flatMap(item => item.tags || []));
-    $('#popLatest').textContent = `最后保存：${when || '时间未知'}，共 ${tags.size} 个标签`;
+    const when = relativeDay(stats.lastAt);
+    $('#popLatest').textContent = `最后保存：${when || '时间未知'}，共 ${stats.tags} 个标签`;
   } catch (error) {
     $('#popLatest').textContent = `无法打开收藏库：${error.message}`;
     $('#popLatest').classList.add('error');
@@ -62,3 +59,6 @@ $('#popScan').addEventListener('click', () => openLibrary({ scan: '1' }));
 
 if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 loadStats();
+chrome.storage?.local.get('syncState').then(({ syncState }) => {
+  if (syncState?.connected) $('#popPrivacy').textContent = '数据保存在此浏览器，并同步到你的 Google Drive';
+}).catch(() => {});

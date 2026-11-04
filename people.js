@@ -55,5 +55,5 @@ $('#peopleList').addEventListener('click', async event => {
 $('#personSearch').addEventListener('input', () => renderPeople().catch(error => personNotice(error.message, true)));
 
 document.querySelector('.nav[data-view="people"]')?.addEventListener('click', () => renderPeople().catch(error => personNotice(error.message, true)));
-renderPeople().catch(error => personNotice(error.message, true));
+if (view === 'people') renderPeople().catch(error => personNotice(error.message, true));
 

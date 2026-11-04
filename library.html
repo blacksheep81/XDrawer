@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>X 抽屉</title>
+<title>拾羽</title>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="style.css">
 <script src="theme.js"></script>
@@ -14,8 +14,8 @@
 
   <aside class="rail">
     <div class="brand">
-      <span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="brand-text">X 抽屉</span>
+      <img class="brand-mark" src="icons/icon48.png" alt="">
+      <span class="brand-text">拾羽</span>
     </div>
 
     <nav aria-label="收藏库">
@@ -32,7 +32,9 @@
         <button type="button" data-theme-set="light" title="浅色界面">浅色</button>
         <button type="button" data-theme-set="dark" title="深色界面">深色</button>
       </div>
-      <p class="rail-note"><span class="status-dot"></span> 仅保存在此设备</p>
+      <button id="syncOpen" class="sync-open" type="button">☁ 同步</button>
+      <p class="rail-note"><span class="status-dot"></span> <span id="railNote">仅保存在此设备</span></p>
+      <p class="rail-credit">基于 X Drawer 开源项目 · MIT</p>
     </div>
   </aside>
 
@@ -159,7 +161,8 @@
 
       <div id="notice" class="notice" role="status" hidden></div>
 
-      <div id="cards" class="cards"></div>
+      <div id="cards" class="cards"><p class="muted cards-loading">正在读取收藏库…</p></div>
+      <div id="cardsMore" class="cards-more" hidden><button id="cardsMoreButton" class="ghost" type="button">继续加载</button></div>
 
       <div id="selectionBar" class="selection-bar" hidden>
         <span id="selectionCount">已选 0 项</span>
@@ -221,6 +224,21 @@
       <button id="startScan" value="scan" class="primary">开始导入</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="syncDialog">
+  <h2>同步到 Google Drive</h2>
+  <p>收藏库会保存到你自己 Drive 的应用专属隐藏目录，只有拾羽能读取，不经过其他服务器。登录 X 的凭据不会上传。</p>
+  <p id="syncStatus" class="sync-status" role="status"></p>
+  <p id="syncSetup" class="fine sync-setup" hidden></p>
+  <div class="dialog-actions sync-actions">
+    <button id="syncDisconnect" class="ghost" type="button" hidden>断开连接</button>
+    <button id="syncDeleteCloud" class="ghost danger" type="button" hidden>删除云端副本并断开</button>
+    <span class="sync-spacer"></span>
+    <button id="syncClose" class="ghost" type="button">关闭</button>
+    <button id="syncConnect" class="primary" type="button" hidden>连接 Google Drive</button>
+    <button id="syncRun" class="primary" type="button" hidden>立即同步</button>
+  </div>
 </dialog>
 
 <dialog id="tagDialog">
@@ -303,6 +321,7 @@
 </dialog>
 
 <script src="db.js"></script>
+<script src="records.js"></script>
 <script src="xsync.js"></script>
 <script src="library.js"></script>
 <script src="people.js"></script>

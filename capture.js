@@ -49,8 +49,8 @@ function updateQuickSave() {
   if (!quickSaveButton && post) {
     quickSaveButton = document.createElement('button');
     quickSaveButton.type = 'button';
-    quickSaveButton.textContent = '✦ 保存到 X 抽屉';
-    quickSaveButton.setAttribute('aria-label','将当前 X 帖子手动保存到 X 抽屉');
+    quickSaveButton.textContent = '✦ 保存到拾羽';
+    quickSaveButton.setAttribute('aria-label','将当前 X 帖子手动保存到拾羽');
     quickSaveButton.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;border:1px solid #4a6f65;border-radius:4px;padding:12px 16px;background:#2c4a43;color:#f2f5f0;font:600 13px system-ui,sans-serif;box-shadow:0 12px 30px #0008;cursor:pointer';
     quickSaveButton.addEventListener('click', async () => {
       const current = detailPost();
@@ -59,7 +59,7 @@ function updateQuickSave() {
       quickSaveButton.textContent = '正在保存…';
       try {
         const result = await chrome.runtime.sendMessage({ type:'SAVE_VISIBLE_POST', post:current, profile:currentProfile() });
-        quickSaveButton.textContent = result?.ok ? '✓ 已保存到抽屉' : `保存失败：${result?.error || '请重试'}`;
+        quickSaveButton.textContent = result?.ok ? '✓ 已保存到拾羽' : `保存失败：${result?.error || '请重试'}`;
       } catch { quickSaveButton.textContent = '保存失败 · 请重试'; }
       finally { quickSaveButton.disabled = false; }
     });
@@ -69,7 +69,7 @@ function updateQuickSave() {
     quickSaveButton.hidden = !post;
     if (post && !quickSaveButton.disabled && quickSaveButton.dataset.postId !== post.id) {
       quickSaveButton.dataset.postId = post.id;
-      quickSaveButton.textContent = '✦ 保存到 X 抽屉';
+      quickSaveButton.textContent = '✦ 保存到拾羽';
     }
   }
 }

@@ -140,19 +140,8 @@ a { color: var(--brass-ink); }
   white-space: nowrap;
 }
 
-/* 서랍 마크: 가운데 칸만 열려 있는 서랍 */
-.drawer-mark {
-  display: inline-grid;
-  grid-template-rows: repeat(3, 1fr);
-  gap: 2px;
-  width: 26px; height: 26px;
-  padding: 4px 3px;
-  border-radius: var(--r-sm);
-  background: var(--rail);
-  flex: 0 0 auto;
-}
-.drawer-mark i { display: block; border-radius: 1px; background: var(--rail-ink); margin: 0 2px; }
-.drawer-mark i:nth-child(2) { background: #e0b04c; margin: 0 -1px; }
+/* 브랜드 마크: icons/icon.svg 의 깃털 */
+.brand-mark { display: block; width: 26px; height: 26px; flex: 0 0 auto; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }

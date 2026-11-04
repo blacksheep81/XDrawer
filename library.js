@@ -8,6 +8,11 @@ const selectedKeys = new Set();
 let visibleKeys = [];
 let confirmResolve = null;
 
+/* 카드는 한 번에 다 그리지 않고 스크롤에 맞춰 조금씩 붙인다. */
+const CARD_PAGE_SIZE = 60;
+let cardGroups = [], cardTerms = [], shownCards = 0, cardFilterKey = '';
+let tagColors = new Map();
+
 const titles = { all:'全部收藏', bookmark:'书签', like:'喜欢', saved:'手动保存', people:'人物·小号' };
 const subtitles = {
   all:'搜索、筛选和整理你保存的全部帖子。',
@@ -20,7 +25,6 @@ const kindLabels = { bookmark:'书签', like:'喜欢', saved:'手动保存' };
 const kindMarks = kindLabels;
 
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-const safeColor = value => (/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value) : '');
 
 const collectionForURL = url => {
   try { const parsed = new URL(url); if (!['x.com','twitter.com'].includes(parsed.hostname)) return null; if (parsed.pathname === '/i/bookmarks') return 'bookmark'; if (/^\/[^/]+\/likes\/?$/.test(parsed.pathname)) return 'like'; } catch {}
@@ -41,22 +45,6 @@ async function waitForTabReady(id) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error('X 页面未能打开。请检查登录状态和网络。');
-}
-
-function normalizePost(item) {
-  if (!item || typeof item !== 'object' || !['bookmark','like','saved'].includes(item.collection) || typeof item.id !== 'string' || !/^\d+$/.test(item.id) || typeof item.url !== 'string' || !/^https:\/\/x\.com\/[^/]+\/status\/\d+$/.test(item.url)) throw new Error('备份中有无效的帖子。');
-  if (item.url.split('/status/')[1] !== item.id) throw new Error('备份中有帖子地址与 ID 不一致的条目。');
-  const account = typeof item.account === 'string' && /^[A-Za-z0-9_]{1,25}$/.test(item.account) ? item.account.toLowerCase() : 'legacy';
-  if (![`${item.collection}:${item.id}`, `${account}:${item.collection}:${item.id}`].includes(item.key)) throw new Error('备份中有无效的帖子。');
-  const string = key => typeof item[key] === 'string' ? item[key].slice(0,100000) : '';
-  const safeList = value => Array.isArray(value) ? value.filter(x => typeof x === 'string' && x.length < 3000).slice(0,30) : [];
-  const images = safeList(item.imageUrls).filter(url => { try { const u = new URL(url); return u.protocol === 'https:' && ['pbs.twimg.com','ton.twimg.com'].includes(u.hostname); } catch { return false; } });
-  const avatarUrl = string('avatarUrl').slice(0,3000);
-  const safeAvatar = (() => { try { const u = new URL(avatarUrl); return u.protocol === 'https:' && u.hostname === 'pbs.twimg.com' ? u.href : ''; } catch { return ''; } })();
-  const links = safeList(item.links).filter(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } });
-  const tags = Array.isArray(item.tags) ? [...new Set(item.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0,40)).filter(Boolean))].slice(0,20) : [];
-  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', linkStatus:['available','unavailable','unknown'].includes(item.linkStatus) ? item.linkStatus : '', checkedAt:string('checkedAt').slice(0,30) };
 }
 
 function notice(message, error = false) { const el = $('#notice'); el.textContent = message; el.hidden = false; el.classList.toggle('error', error); }
@@ -88,9 +76,11 @@ function parseQuery(query) {
 }
 
 function matchesQuery(item, parsed) {
-  const haystack = [item.text, item.note, item.author, item.username, item.url, ...(item.tags || []), ...(item.links || [])].join(' ').toLocaleLowerCase();
-  if (!parsed.include.every(term => haystack.includes(term))) return false;
-  if (parsed.exclude.some(term => haystack.includes(term))) return false;
+  if (parsed.include.length || parsed.exclude.length) {
+    const haystack = [item.text, item.note, item.author, item.username, item.url, ...(item.tags || []), ...(item.links || [])].join(' ').toLocaleLowerCase();
+    if (!parsed.include.every(term => haystack.includes(term))) return false;
+    if (parsed.exclude.some(term => haystack.includes(term))) return false;
+  }
   const who = `${item.username || ''} ${item.author || ''}`.toLocaleLowerCase();
   if (!parsed.from.every(term => who.includes(term))) return false;
   if (parsed.notFrom.some(term => who.includes(term))) return false;
@@ -146,10 +136,8 @@ function highlightText(text, terms) {
 }
 
 async function refresh() {
-  posts = await getAll('posts');
-  history = await getAll('history');
-  people = await getAll('people');
-  tagMeta = await getAll('tags');
+  [posts, history, people, tagMeta] = await getMany(['posts','history','people','tags']);
+  tagColors = new Map(tagMeta.map(meta => [meta.name, safeColor(meta.color)]));
   const keys = new Set(posts.map(item => item.key));
   for (const key of selectedKeys) if (!keys.has(key)) selectedKeys.delete(key);
   render();
@@ -210,7 +198,7 @@ function tagCounts() {
   for (const meta of tagMeta) if (!counts.has(meta.name)) counts.set(meta.name, 0);
   return counts;
 }
-function tagColor(name) { return safeColor(tagMeta.find(meta => meta.name === name)?.color); }
+function tagColor(name) { return tagColors.get(name) || ''; }
 
 function renderTagBar() {
   const counts = tagCounts();
@@ -259,7 +247,14 @@ function filteredPosts(parsed) {
 
 function sortPosts(items) {
   const sort = $('#sort').value;
-  const time = value => { const parsed = Date.parse(value || ''); return Number.isNaN(parsed) ? 0 : parsed; };
+  const cache = new Map();
+  const time = value => {
+    if (!value) return 0;
+    let parsed = cache.get(value);
+    if (parsed === undefined) { parsed = Date.parse(value); if (Number.isNaN(parsed)) parsed = 0; cache.set(value, parsed); }
+    return parsed;
+  };
+  const collator = new Intl.Collator('zh-CN');
   return items.sort((a, b) => {
     if (sort === 'likes' || sort === 'views') {
       const pick = item => (sort === 'likes' ? item.likeCount : item.viewCount) ?? -1;
@@ -267,7 +262,7 @@ function sortPosts(items) {
     }
     if (sort === 'posted') return time(b.date) - time(a.date);
     if (sort === 'oldest') return (time(a.date) || Infinity) - (time(b.date) || Infinity);
-    if (sort === 'author') return (a.author || a.username || '').localeCompare(b.author || b.username || '', 'zh-CN') || time(b.savedAt) - time(a.savedAt);
+    if (sort === 'author') return collator.compare(a.author || a.username || '', b.author || b.username || '') || time(b.savedAt) - time(a.savedAt);
     return time(b.savedAt) - time(a.savedAt);
   });
 }
@@ -280,6 +275,16 @@ function activeFilterCount() {
   count += activeTags.size;
   if ($('#search').value.trim()) count++;
   return count;
+}
+
+/* 미리보기 칸은 158px 높이라 원본 대신 작은 크기의 이미지를 받는다. */
+function thumbnailURL(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname !== 'pbs.twimg.com' || !url.pathname.startsWith('/media/')) return value;
+    url.searchParams.set('name', 'small');
+    return url.href;
+  } catch { return value; }
 }
 
 function cardHTML(group, terms) {
@@ -319,7 +324,7 @@ function cardHTML(group, terms) {
 </div>${duplicateNote}
 <p class="post-text">${highlightText(item.text || '(未能获取正文)', terms)}</p>
 ${item.note ? `<p class="post-note">备注：${highlightText(item.note, terms)}</p>` : ''}
-${item.imageUrls?.[0] ? `<img class="preview" src="${escapeHTML(item.imageUrls[0])}" alt="帖子图片" loading="lazy">` : ''}
+${item.imageUrls?.[0] ? `<img class="preview" src="${escapeHTML(thumbnailURL(item.imageUrls[0]))}" alt="帖子图片" loading="lazy" decoding="async">` : ''}
 ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
 <div class="card-actions">
 <button class="reading-button${reading === 'later' ? ' active' : ''}" data-state="later" data-keys="${keyData}" aria-pressed="${reading === 'later'}">稍后读</button>
@@ -332,6 +337,38 @@ ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
 </div></article>`;
 }
 
+function markPartialSelection(inputs) {
+  inputs.forEach(input => {
+    const keys = JSON.parse(input.dataset.keys);
+    input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
+  });
+}
+
+function updateCardsMore() {
+  const more = $('#cardsMore');
+  const left = cardGroups.length - shownCards;
+  more.hidden = left <= 0;
+  if (left > 0) $('#cardsMoreButton').textContent = `已显示 ${shownCards.toLocaleString('zh-CN')} / ${cardGroups.length.toLocaleString('zh-CN')}，继续加载`;
+  // 붙인 뒤에도 하단이 화면 안에 있으면 교차 상태가 바뀌지 않으므로 다시 관찰한다.
+  cardsMoreObserver.unobserve(more);
+  if (left > 0) cardsMoreObserver.observe(more);
+}
+
+function appendCards() {
+  if (shownCards >= cardGroups.length) return;
+  const next = cardGroups.slice(shownCards, shownCards + CARD_PAGE_SIZE);
+  const holder = document.createElement('template');
+  holder.innerHTML = next.map(group => cardHTML(group, cardTerms)).join('');
+  markPartialSelection(holder.content.querySelectorAll('.post-select'));
+  $('#cards').append(holder.content);
+  shownCards += next.length;
+  updateCardsMore();
+}
+const cardsMoreObserver = new IntersectionObserver(entries => {
+  if (entries.some(entry => entry.isIntersecting)) appendCards();
+}, { rootMargin:'900px 0px' });
+$('#cardsMoreButton').addEventListener('click', appendCards);
+
 function render() {
   const isPosts = ['all','bookmark','like','saved'].includes(view);
   $('#postsPanel').hidden = !isPosts;
@@ -339,18 +376,25 @@ function render() {
   $('#scanButton').hidden = !['all','bookmark','like'].includes(view);
   $('#title').textContent = titles[view];
   $('#subtitle').textContent = subtitles[view];
+  const kindCounts = { bookmark:0, like:0, saved:0 };
+  for (const item of posts) if (item.collection in kindCounts) kindCounts[item.collection]++;
   $('#allCount').textContent = posts.length;
-  $('#bookmarkCount').textContent = posts.filter(item => item.collection === 'bookmark').length;
-  $('#likeCount').textContent = posts.filter(item => item.collection === 'like').length;
-  $('#savedCount').textContent = posts.filter(item => item.collection === 'saved').length;
+  $('#bookmarkCount').textContent = kindCounts.bookmark;
+  $('#likeCount').textContent = kindCounts.like;
+  $('#savedCount').textContent = kindCounts.saved;
   $('#peopleCount').textContent = people.length;
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === view));
-  if (!isPosts) return;
+  if (!isPosts) { $('#cardsMore').hidden = true; return; }
 
   const selectedAccount = $('#accountFilter').value;
-  const accounts = [...new Set(posts.map(item => item.account || 'legacy'))].sort();
+  const accountNames = new Map();
+  for (const item of posts) {
+    const account = item.account || 'legacy';
+    if (!accountNames.get(account)) accountNames.set(account, item.accountName || '');
+  }
+  const accounts = [...accountNames.keys()].sort();
   $('#accountFilter').innerHTML = '<option value="all">所有账号</option>' + accounts.map(account => {
-    const label = posts.find(item => item.account === account && item.accountName)?.accountName || account;
+    const label = accountNames.get(account) || account;
     return `<option value="${escapeHTML(account)}">@${escapeHTML(label)}</option>`;
   }).join('');
   $('#accountFilter').value = accounts.includes(selectedAccount) ? selectedAccount : 'all';
@@ -397,20 +441,25 @@ function render() {
   visibleKeys = filtered.map(item => item.key);
   updateSelection();
 
+  // 필터가 그대로면(태그 수정 등) 스크롤 위치를 잃지 않도록 보이던 만큼 다시 그린다.
+  const filterKey = JSON.stringify(currentViewSettings());
+  if (filterKey !== cardFilterKey) { cardFilterKey = filterKey; shownCards = 0; }
+  shownCards = Math.min(Math.max(shownCards, CARD_PAGE_SIZE), groups.length);
+  cardGroups = groups;
+  cardTerms = terms;
+
   $('#cards').innerHTML = groups.length
-    ? groups.map(group => cardHTML(group, terms)).join('')
-    : `<div class="empty"><span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+    ? groups.slice(0, shownCards).map(group => cardHTML(group, terms)).join('')
+    : `<div class="empty"><img class="brand-mark" src="icons/icon128.png" alt="">
 <h2>${filterCount ? '没有符合条件的帖子' : '还没有保存的帖子'}</h2>
 <p>${filterCount
   ? '试试更改搜索词或筛选条件，或点击“重置筛选”。'
   : view === 'saved'
-    ? '试试点击 X 帖子页面右下角的“✦ 保存到 X 抽屉”按钮。'
+    ? '试试点击 X 帖子页面右下角的“✦ 保存到拾羽”按钮。'
     : '登录 X 后，点击“＋ 从 X 导入”试试。'}</p></div>`;
 
-  $('#cards').querySelectorAll('.post-select').forEach(input => {
-    const keys = JSON.parse(input.dataset.keys);
-    input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
-  });
+  markPartialSelection($('#cards').querySelectorAll('.post-select'));
+  updateCardsMore();
 
   $('#history').innerHTML = [...history].reverse().slice(0,6).map(entry =>
     `<div class="history-row"><span>${escapeHTML(kindMarks[entry.collection] || entry.collection)}：确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
@@ -436,11 +485,15 @@ function confirmAction(title, text, okLabel) {
 /* ── 네비게이션·필터 연결 ────────────────────── */
 document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => { view = button.dataset.view; render(); }));
 
+/* 검색은 글자마다 전체를 다시 거르지 않도록 입력이 잠시 멈출 때 그린다. */
+let renderTimer = 0;
+function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 120); }
+
 const filterControls = ['#search','#media','#sort','#accountFilter','#authorFilter','#readFilter','#linkFilter','#fromDate','#toDate','#layout','#collapseDuplicates','#untaggedOnly'];
 for (const id of filterControls) {
   const control = $(id);
   if (!control) { console.warn(`未找到筛选控件 ${id}。`); continue; }
-  control.addEventListener(id === '#search' ? 'input' : 'change', render);
+  control.addEventListener(id === '#search' ? 'input' : 'change', id === '#search' ? renderSoon : render);
 }
 for (const id of ['#fromDate','#toDate']) $(id).addEventListener('change', () => { $('#datePreset').value = $('#fromDate').value || $('#toDate').value ? 'custom' : 'all'; });
 
@@ -576,7 +629,7 @@ $('#applyBulk').addEventListener('click', async () => {
 $('#deleteSelected').addEventListener('click', async () => {
   const keys = [...selectedKeys];
   if (!keys.length) return;
-  const ok = await confirmAction('删除所选帖子', `将从此设备的收藏库中移除 ${keys.length} 个保存项。X 账号中的书签和喜欢不受影响。此操作无法撤销。`, `删除 ${keys.length} 项`);
+  const ok = await confirmAction('删除所选帖子', `将从收藏库中移除 ${keys.length} 个保存项，已开启同步的其他设备也会一起移除。X 账号中的书签和喜欢不受影响。此操作无法撤销。`, `删除 ${keys.length} 项`);
   if (!ok) return;
   await deletePosts(keys);
   selectedKeys.clear();
@@ -787,7 +840,7 @@ $('#cards').addEventListener('click', async event => {
   const deleteButton = event.target.closest('.delete');
   if (!deleteButton) return;
   const target = posts.find(item => item.key === deleteButton.dataset.key);
-  const ok = await confirmAction('删除帖子', `将从此设备的收藏库中移除此帖子。X 账号中的书签和喜欢不受影响。\n\n${(target?.text || target?.url || '').replace(/\s+/g, ' ').trim().slice(0,90)}`, '删除');
+  const ok = await confirmAction('删除帖子', `将从收藏库中移除此帖子，已开启同步的其他设备也会一起移除。X 账号中的书签和喜欢不受影响。\n\n${(target?.text || target?.url || '').replace(/\s+/g, ' ').trim().slice(0,90)}`, '删除');
   if (!ok) return;
   await deletePost(deleteButton.dataset.key);
   await refresh();
@@ -986,7 +1039,7 @@ $('#exportButton').addEventListener('click', async () => {
       savedViews:await getAll('savedViews'),
       tags:await getAll('tags')
     };
-    downloadFile(`x-drawer-${localDay(new Date().toISOString())}.json`, new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
+    downloadFile(`shiyu-${localDay(new Date().toISOString())}.json`, new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
     notice(`已将 ${posts.length.toLocaleString('zh-CN')} 条帖子导出为 JSON 备份。`);
   } catch (error) { notice(`导出失败：${error.message}`, true); }
 });
@@ -1021,7 +1074,7 @@ $('#exportCsvButton').addEventListener('click', () => {
       return CSV_COLUMNS.map(([, field]) => csvCell(flat[field])).join(',');
     });
     const csv = '﻿' + [CSV_COLUMNS.map(([label]) => csvCell(label)).join(','), ...body].join('\r\n');
-    downloadFile(`x-drawer-${localDay(new Date().toISOString())}.csv`, new Blob([csv], { type:'text/csv;charset=utf-8' }));
+    downloadFile(`shiyu-${localDay(new Date().toISOString())}.csv`, new Blob([csv], { type:'text/csv;charset=utf-8' }));
     notice(`已将当前筛选条件下的 ${rows.length.toLocaleString('zh-CN')} 条帖子导出为 CSV。`);
   } catch (error) { notice(`CSV 导出失败：${error.message}`, true); }
 });
@@ -1039,32 +1092,15 @@ $('#importFile').addEventListener('change', async event => {
 
     const people = backup.version >= 3 ? backup.people : [];
     if (!Array.isArray(people) || people.length > 50000) throw new Error('人物记录的格式或数量无效。');
-    const validPeople = people.map(person => {
-      const handle = String(person?.handle || '').toLowerCase();
-      const match = String(person?.match || '').toLowerCase();
-      if (!/^[a-z0-9_]{1,15}$/.test(handle) || (match && !/^[a-z0-9_]{1,15}$/.test(match))) throw new Error('人物记录中有无效的账号。');
-      return { handle, match, label:String(person.label || '').slice(0,80), note:String(person.note || '').slice(0,500), privateAccount:!!person.privateAccount, updatedAt:String(person.updatedAt || '') };
-    });
+    const validPeople = people.map(normalizePerson);
 
     const viewItems = backup.version >= 5 ? backup.savedViews : [];
     if (!Array.isArray(viewItems) || viewItems.length > 100) throw new Error('已保存视图的格式或数量无效。');
-    const validViews = viewItems.map(entry => {
-      if (typeof entry?.id !== 'string' || !/^[a-z0-9-]{1,80}$/.test(entry.id) || typeof entry.name !== 'string' || !entry.name.trim() || entry.name.length > 50 || !entry.settings || typeof entry.settings !== 'object') throw new Error('已保存视图中有无效的条目。');
-      const settings = entry.settings;
-      const text = key => typeof settings[key] === 'string' ? settings[key].slice(0,500) : '';
-      const tags = Array.isArray(settings.tags)
-        ? settings.tags.filter(tag => typeof tag === 'string').map(tag => tag.slice(0,40)).slice(0,20)
-        : (typeof settings.tag === 'string' && settings.tag && settings.tag !== 'all' ? [settings.tag.slice(0,40)] : []);
-      return { id:entry.id, name:entry.name.trim(), settings:{ view:text('view'), search:text('search'), media:text('media'), sort:text('sort'), account:text('account'), author:text('author'), tags, reading:text('reading'), link:text('link'), from:text('from'), to:text('to'), preset:text('preset'), layout:text('layout'), collapse:!!settings.collapse, untagged:!!settings.untagged } };
-    });
+    const validViews = viewItems.map(normalizeView);
 
     const tagItems = backup.version >= 6 ? backup.tags : [];
     if (!Array.isArray(tagItems) || tagItems.length > 5000) throw new Error('标签列表的格式或数量无效。');
-    const validTags = tagItems.map(entry => {
-      const name = typeof entry?.name === 'string' ? entry.name.trim().slice(0,40) : '';
-      if (!name) throw new Error('标签列表中有无效的条目。');
-      return { name, color:safeColor(entry.color), createdAt:typeof entry.createdAt === 'string' ? entry.createdAt.slice(0,30) : '' };
-    });
+    const validTags = tagItems.map(normalizeTag);
 
     await importPosts(items);
     await withTransaction('people', 'readwrite', tx => {
@@ -1077,13 +1113,13 @@ $('#importFile').addEventListener('change', async event => {
     const existingViews = new Set((await getAll('savedViews')).map(item => item.id));
     await withTransaction('savedViews', 'readwrite', tx => {
       const store = tx.objectStore('savedViews');
-      for (const entry of validViews) if (!existingViews.has(entry.id)) { store.put(entry); existingViews.add(entry.id); }
+      for (const entry of validViews) if (!existingViews.has(entry.id)) { store.put({ ...entry, updatedAt:new Date().toISOString() }); existingViews.add(entry.id); }
     });
     await withTransaction('tags', 'readwrite', tx => {
       const store = tx.objectStore('tags');
       for (const entry of validTags) {
         const request = store.get(entry.name);
-        request.onsuccess = () => { if (!request.result) store.put(entry); };
+        request.onsuccess = () => { if (!request.result) store.put({ ...entry, updatedAt:new Date().toISOString() }); };
       }
     });
 
@@ -1119,7 +1155,78 @@ function applyStartupParams() {
   return params.get('scan') === '1';
 }
 
+/* ── 동기화 ──────────────────────────────────── */
+let syncInfo = { configured:false, state:{} }, syncBusy = false, lastDataChange = '';
+
+function renderSync() {
+  const { configured, state = {} } = syncInfo;
+  const connected = !!state.connected;
+  const when = state.lastAt ? new Date(state.lastAt).toLocaleString('zh-CN') : '';
+  $('#syncOpen').textContent = !connected ? '☁ 同步：未连接' : state.lastError ? '☁ 同步：需要处理' : '☁ 同步：已开启';
+  $('#syncOpen').classList.toggle('attention', connected && !!state.lastError);
+  $('#railNote').textContent = connected ? '已同步到你的 Google Drive' : '仅保存在此设备';
+  const lines = connected ? [`已连接：${state.email || 'Google 账号'}`, when ? `上次同步：${when}` : '尚未完成同步'] : [configured ? '尚未连接。连接后，本机和云端的数据会自动合并，不会互相覆盖。' : '同步功能尚未配置，当前版本的数据仍只保存在此设备。'];
+  if (syncBusy) lines.push('正在处理…');
+  if (state.lastError) lines.push(state.lastError);
+  $('#syncStatus').textContent = lines.join('\n');
+  $('#syncStatus').classList.toggle('error', !!state.lastError);
+  $('#syncSetup').hidden = configured;
+  $('#syncSetup').textContent = configured ? '' : '配置方法见 README 的“Google Drive 同步”一节。';
+  $('#syncConnect').hidden = !configured || (connected && !state.needsLogin);
+  $('#syncConnect').textContent = connected ? '重新连接' : '连接 Google Drive';
+  $('#syncRun').hidden = !connected || !!state.needsLogin;
+  $('#syncDisconnect').hidden = $('#syncDeleteCloud').hidden = !connected;
+  for (const id of ['#syncConnect','#syncRun','#syncDisconnect','#syncDeleteCloud']) $(id).disabled = syncBusy;
+}
+
+async function syncRequest(message) {
+  syncBusy = true;
+  renderSync();
+  try {
+    const answer = await chrome.runtime.sendMessage(message);
+    if (answer) {
+      syncInfo = { ...syncInfo, configured:answer.configured, state:answer.ok ? answer.state : { ...syncInfo.state, lastError:answer.error } };
+    }
+  } catch (error) {
+    syncInfo = { ...syncInfo, state:{ ...syncInfo.state, lastError:error.message } };
+  } finally {
+    syncBusy = false;
+    renderSync();
+  }
+}
+
+$('#syncOpen').addEventListener('click', () => { renderSync(); $('#syncDialog').showModal(); });
+$('#syncClose').addEventListener('click', () => $('#syncDialog').close());
+$('#syncConnect').addEventListener('click', () => syncRequest({ type:'SYNC_CONNECT' }));
+$('#syncRun').addEventListener('click', () => syncRequest({ type:'SYNC_NOW' }));
+$('#syncDisconnect').addEventListener('click', () => syncRequest({ type:'SYNC_DISCONNECT' }));
+$('#syncDeleteCloud').addEventListener('click', async () => {
+  $('#syncDialog').close();
+  const ok = await confirmAction('删除云端副本', '将删除 Google Drive 中的同步文件并断开连接。本机数据不受影响。其他仍在同步的设备可能会重新上传。此操作无法撤销。', '删除');
+  $('#syncDialog').showModal();
+  if (ok) await syncRequest({ type:'SYNC_DISCONNECT', deleteCloud:true });
+});
+
+/* 백그라운드 동기화가 받아온 변경을 화면에 반영한다. */
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== 'local' || !changes.syncState) return;
+  const state = changes.syncState.newValue || {};
+  syncInfo = { ...syncInfo, state };
+  renderSync();
+  if (state.dataChangedAt && state.dataChangedAt !== lastDataChange) {
+    lastDataChange = state.dataChangedAt;
+    Promise.all([refresh(), refreshSavedViews()]).catch(error => notice(`刷新收藏库失败：${error.message}`, true));
+  }
+});
+
+async function startSync() {
+  await syncRequest({ type:'SYNC_STATUS' });
+  lastDataChange = syncInfo.state?.dataChangedAt || '';
+  if (syncInfo.state?.connected) chrome.runtime.sendMessage({ type:'SYNC_NOW' }).catch(() => {});
+}
+
 if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
+startSync();
 const wantsScan = applyStartupParams();
 Promise.all([refresh(), refreshSavedViews()])
   .then(() => { if (wantsScan && ['all','bookmark','like'].includes(view)) openScanDialog(); })

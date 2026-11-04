@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "X 抽屉",
-  "version": "0.11.0",
-  "description": "在你自己的浏览器中整理 X 书签、喜欢和手动保存帖子的本地资料库",
-  "permissions": ["tabs", "storage", "cookies"],
-  "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
+  "name": "拾羽 - X 收藏库",
+  "version": "0.12.0",
+  "description": "把 X 上的书签、喜欢和手动保存的帖子，一片片拾进你自己浏览器里的本地收藏库",
+  "permissions": ["tabs", "storage", "cookies", "identity", "alarms"],
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://www.googleapis.com/*", "https://oauth2.googleapis.com/*"],
   "action": {
-    "default_title": "打开 X 抽屉",
+    "default_title": "打开拾羽",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
