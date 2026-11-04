@@ -523,6 +523,9 @@ function renderRail() {
     entry.count++;
     authorCounts.set(item.username, entry);
   }
+  $('#statPosts').textContent = posts.length.toLocaleString('zh-CN');
+  $('#statAuthors').textContent = authorCounts.size.toLocaleString('zh-CN');
+  $('#statTags').textContent = tagCounts().size.toLocaleString('zh-CN');
   const authors = [...authorCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
   const limit = authorExpanded ? 40 : 8;
   $('#authorGroup').hidden = !authors.length;

@@ -51,7 +51,7 @@ function updateQuickSave() {
     quickSaveButton.type = 'button';
     quickSaveButton.textContent = '✦ 保存到 X 抽屉';
     quickSaveButton.setAttribute('aria-label','将当前 X 帖子手动保存到 X 抽屉');
-    quickSaveButton.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;border:1px solid #4a6f65;border-radius:4px;padding:12px 16px;background:#2c4a43;color:#f2f5f0;font:600 13px system-ui,sans-serif;box-shadow:0 12px 30px #0008;cursor:pointer';
+    quickSaveButton.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;border:1px solid #3ebaf48c;border-radius:9999px;padding:10px 16px;background:#0d0d0d;color:#6fcdf8;font:700 13px system-ui,sans-serif;box-shadow:0 12px 30px #0008;cursor:pointer';
     quickSaveButton.addEventListener('click', async () => {
       const current = detailPost();
       if (!current) { quickSaveButton.textContent = '未找到帖子'; return; }

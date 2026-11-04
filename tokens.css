@@ -1,135 +1,145 @@
-/* X 서랍 디자인 토큰 — 라이트/다크 공용 기반 */
+/* X 서랍 디자인 토큰 — 기본은 검은 바탕(OLED), 라이트는 따뜻한 종이 바탕 */
 :root {
   color-scheme: light;
 
-  --rail:       #2c4a43;
-  --rail-2:     #365850;
-  --rail-3:     #40665d;
-  --rail-line:  #4a6f65;
-  --rail-ink:   #f2f5f0;
-  --rail-muted: #b9cbc3;
+  --rail:       #fdfbf9;
+  --rail-2:     #f6f1ec;
+  --rail-3:     #efe8e1;
+  --rail-line:  rgba(120, 72, 20, .14);
+  --rail-ink:   #1c1917;
+  --rail-muted: #78716c;
 
-  --paper:      #edf0ec;
-  --paper-deep: #e1e6e1;
-  --surface:    #fbfcf8;
-  --surface-2:  #f3f5f1;
-  --surface-3:  #e7ebe6;
-  --line:       #cfd7d1;
-  --line-soft:  #e2e7e2;
+  --paper:      #faf8f6;
+  --paper-deep: #f3efea;
+  --surface:    #ffffff;
+  --surface-2:  #fbf9f6;
+  --surface-3:  #f3eee8;
+  --line:       rgba(120, 72, 20, .16);
+  --line-soft:  rgba(120, 72, 20, .09);
+  --glass:      rgba(250, 248, 246, .88);
 
-  --ink:        #18211f;
-  --ink-2:      #2f3b38;
-  --muted:      #56645f;
-  --faint:      #6e7c77;
+  --ink:        #1c1917;
+  --ink-2:      #44403c;
+  --muted:      #6b645e;
+  --faint:      #78716c;
 
-  --brass:      #a9700f;
-  --brass-ink:  #7a4f05;
-  --brass-soft: #f6ecd6;
-  --brass-line: #dcc48f;
+  --accent:      #e11d48;
+  --accent-ink:  #be123c;
+  --accent-soft: rgba(225, 29, 72, .08);
+  --accent-line: rgba(225, 29, 72, .4);
+  --accent-glow: rgba(225, 29, 72, .1);
 
-  --rose:       #b23f5b;
-  --rose-soft:  #f8e8ec;
-  --teal:       #17766a;
-  --teal-soft:  #e0f0ec;
+  --gold:       #b45309;
+  --gold-soft:  rgba(245, 158, 11, .12);
+  --gold-line:  rgba(180, 83, 9, .32);
+  --rose:       #c026a3;
+  --rose-soft:  rgba(192, 38, 163, .08);
+  --teal:       #0f766e;
+  --teal-soft:  rgba(15, 118, 110, .09);
 
-  --ok:         #27694f;
-  --ok-soft:    #e4f2ea;
-  --ok-line:    #bcdcc9;
-  --bad:        #a8362f;
-  --bad-soft:   #fbe9e6;
-  --bad-line:   #efc8c1;
+  --ok:         #15803d;
+  --ok-soft:    rgba(21, 128, 61, .09);
+  --ok-line:    rgba(21, 128, 61, .3);
+  --bad:        #b91c1c;
+  --bad-soft:   rgba(185, 28, 28, .08);
+  --bad-line:   rgba(185, 28, 28, .3);
 
-  --btn-ink:    #2c4a43;
-  --btn-ink-h:  #3a5f56;
-  --on-dark:    #f8faf6;
+  --btn-ink:    #1c1917;
+  --btn-ink-h:  #3a3531;
+  --on-dark:    #fafaf9;
 
-  --shadow-1: none;
-  --shadow-2: 0 2px 8px rgba(24, 33, 31, .08);
-  --shadow-3: 0 18px 48px rgba(24, 33, 31, .24);
+  --shadow-1: 0 1px 3px rgba(120, 113, 108, .07);
+  --shadow-2: 0 10px 28px -6px rgba(120, 113, 108, .16);
+  --shadow-3: 0 24px 50px -12px rgba(87, 83, 78, .28);
 
-  --r-sm: 3px;
-  --r-md: 4px;
-  --r-lg: 6px;
-  --r-xl: 8px;
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-full: 9999px;
 
-  --sans: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Apple SD Gothic Neo", "Malgun Gothic",
-          ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STZhongsong", "SimSun", serif;
-  --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  --sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+          "Noto Sans SC", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  --rail:       #16231f;
-  --rail-2:     #1f302b;
-  --rail-3:     #283c36;
-  --rail-line:  #33493f;
-  --rail-ink:   #e6ece7;
-  --rail-muted: #93a59d;
+  --rail:       #060607;
+  --rail-2:     rgba(255, 255, 255, .05);
+  --rail-3:     rgba(255, 255, 255, .09);
+  --rail-line:  rgba(255, 255, 255, .1);
+  --rail-ink:   #f1f5f9;
+  --rail-muted: #8d9bae;
 
-  --paper:      #1a2422;
-  --paper-deep: #141c1a;
-  --surface:    #22302d;
-  --surface-2:  #2a3936;
-  --surface-3:  #33443f;
-  --line:       #3a4b47;
-  --line-soft:  #2f3f3b;
+  --paper:      #000000;
+  --paper-deep: #050505;
+  --surface:    #0d0d0d;
+  --surface-2:  #141416;
+  --surface-3:  #1f1f22;
+  --line:       rgba(255, 255, 255, .12);
+  --line-soft:  rgba(255, 255, 255, .08);
+  --glass:      rgba(0, 0, 0, .86);
 
-  --ink:        #e6ece7;
-  --ink-2:      #cdd6d1;
-  --muted:      #a2b0aa;
-  --faint:      #8d9b96;
+  --ink:        #f8fafc;
+  --ink-2:      #cbd5e1;
+  --muted:      #a3b0c2;
+  --faint:      #8392a7;
 
-  --brass:      #e0b04c;
-  --brass-ink:  #eec778;
-  --brass-soft: #3a311c;
-  --brass-line: #5c4c27;
+  --accent:      #3ebaf4;
+  --accent-ink:  #6fcdf8;
+  --accent-soft: rgba(62, 186, 244, .14);
+  --accent-line: rgba(62, 186, 244, .55);
+  --accent-glow: rgba(62, 186, 244, .3);
 
-  --rose:       #ec8fa6;
-  --rose-soft:  #40272e;
-  --teal:       #6fd3c3;
-  --teal-soft:  #1d3b36;
+  --gold:       #f59e0b;
+  --gold-soft:  rgba(245, 158, 11, .15);
+  --gold-line:  rgba(245, 158, 11, .36);
+  --rose:       #ec4899;
+  --rose-soft:  rgba(236, 72, 153, .15);
+  --teal:       #2dd4bf;
+  --teal-soft:  rgba(45, 212, 191, .13);
 
-  --ok:         #7fd6a7;
-  --ok-soft:    #1a322a;
-  --ok-line:    #2d5742;
-  --bad:        #f0a39a;
-  --bad-soft:   #3a2422;
-  --bad-line:   #5e3430;
+  --ok:         #34d399;
+  --ok-soft:    rgba(52, 211, 153, .13);
+  --ok-line:    rgba(52, 211, 153, .36);
+  --bad:        #fb7185;
+  --bad-soft:   rgba(251, 113, 133, .13);
+  --bad-line:   rgba(251, 113, 133, .38);
 
-  --btn-ink:    #e0b04c;
-  --btn-ink-h:  #eec778;
-  --on-dark:    #1a2422;
+  --btn-ink:    #3ebaf4;
+  --btn-ink-h:  #6fcdf8;
+  --on-dark:    #00131e;
 
-  --shadow-1: none;
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, .3);
-  --shadow-3: 0 18px 48px rgba(0, 0, 0, .55);
+  --shadow-1: 0 2px 8px -2px rgba(0, 0, 0, .7);
+  --shadow-2: 0 12px 32px -8px rgba(0, 0, 0, .85);
+  --shadow-3: 0 24px 50px -12px rgba(0, 0, 0, .95);
 }
 
 * { box-sizing: border-box; }
+
+html { scrollbar-color: var(--line) transparent; }
 
 body {
   margin: 0;
   font-family: var(--sans);
   color: var(--ink);
   background: var(--paper);
-  font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
 }
 
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { opacity: .45; cursor: not-allowed; }
-a { color: var(--brass-ink); }
+a { color: var(--accent-ink); }
 
 :where(input, select, textarea, button, a, [tabindex]):focus-visible {
-  outline: 2px solid var(--brass);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--r-sm);
 }
 
-.u-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.u-label { font-size: 12px; font-weight: 600; color: var(--muted); }
 
 .visually-hidden {
   position: absolute;
@@ -145,14 +155,14 @@ a { color: var(--brass-ink); }
   display: inline-grid;
   grid-template-rows: repeat(3, 1fr);
   gap: 2px;
-  width: 26px; height: 26px;
-  padding: 4px 3px;
-  border-radius: var(--r-sm);
-  background: var(--rail);
+  width: 30px; height: 30px;
+  padding: 6px 5px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #ec4899, #3ebaf4);
   flex: 0 0 auto;
 }
-.drawer-mark i { display: block; border-radius: 1px; background: var(--rail-ink); margin: 0 2px; }
-.drawer-mark i:nth-child(2) { background: #e0b04c; margin: 0 -1px; }
+.drawer-mark i { display: block; border-radius: 1px; background: rgba(255, 255, 255, .72); margin: 0 2px; }
+.drawer-mark i:nth-child(2) { background: #fff; margin: 0 -1px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }

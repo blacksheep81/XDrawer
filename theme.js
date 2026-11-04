@@ -7,8 +7,8 @@ var XTheme = (function () {
   function read() {
     try {
       var saved = localStorage.getItem(KEY);
-      return MODES.indexOf(saved) >= 0 ? saved : 'system';
-    } catch (error) { return 'system'; }
+      return MODES.indexOf(saved) >= 0 ? saved : 'dark';
+    } catch (error) { return 'dark'; }
   }
 
   function resolve(mode) {

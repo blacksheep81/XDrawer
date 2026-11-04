@@ -18,14 +18,6 @@
       <span class="brand-text">X 抽屉</span>
     </div>
 
-    <nav aria-label="收藏库">
-      <button class="nav active" data-view="all" data-tone="all"><span class="nav-dot"></span><span>全部收藏</span><b id="allCount">0</b></button>
-      <button class="nav" data-view="bookmark" data-tone="bookmark"><span class="nav-dot"></span><span>书签</span><b id="bookmarkCount">0</b></button>
-      <button class="nav" data-view="like" data-tone="like"><span class="nav-dot"></span><span>喜欢</span><b id="likeCount">0</b></button>
-      <button class="nav" data-view="saved" data-tone="saved"><span class="nav-dot"></span><span>手动保存</span><b id="savedCount">0</b></button>
-      <button class="nav" data-view="people" data-tone="people"><span class="nav-dot"></span><span>人物·小号</span><b id="peopleCount">0</b></button>
-    </nav>
-
     <div class="rail-groups">
       <section class="rail-group" aria-labelledby="ruleGroupTitle">
         <div class="rail-group-head">
@@ -61,19 +53,34 @@
   <main>
     <header class="page-head">
       <div>
+        <p class="eyebrow">✦ LOCAL ARCHIVE</p>
         <h1 id="title">全部收藏</h1>
         <p id="subtitle" class="subtitle">搜索、筛选和整理你保存的全部帖子。</p>
+        <div class="head-actions">
+          <button id="scanButton" class="primary" type="button">从 X 导入</button>
+          <button id="manageTags" class="ghost" type="button">标签管理</button>
+          <button id="editRule" class="ghost" type="button" hidden>编辑分类</button>
+          <button id="applyRule" class="ghost" type="button" hidden>整理已有帖子</button>
+        </div>
       </div>
-      <div class="head-actions">
-        <button id="editRule" class="ghost" type="button" hidden>编辑分类</button>
-        <button id="applyRule" class="ghost" type="button" hidden>整理已有帖子</button>
-        <button id="manageTags" class="ghost" type="button">标签管理</button>
-        <button id="scanButton" class="primary" type="button">从 X 导入</button>
+      <div class="hero-stats" aria-label="收藏库概况">
+        <div><b id="statPosts">0</b><span>收藏总数</span></div>
+        <div><b id="statAuthors">0</b><span>作者</span></div>
+        <div><b id="statTags">0</b><span>标签</span></div>
       </div>
     </header>
 
+    <nav class="nav-pills" aria-label="收藏库">
+      <button class="nav active" data-view="all" data-tone="all"><span class="nav-dot"></span><span>全部收藏</span><b id="allCount">0</b></button>
+      <button class="nav" data-view="bookmark" data-tone="bookmark"><span class="nav-dot"></span><span>书签</span><b id="bookmarkCount">0</b></button>
+      <button class="nav" data-view="like" data-tone="like"><span class="nav-dot"></span><span>喜欢</span><b id="likeCount">0</b></button>
+      <button class="nav" data-view="saved" data-tone="saved"><span class="nav-dot"></span><span>手动保存</span><b id="savedCount">0</b></button>
+      <button class="nav" data-view="people" data-tone="people"><span class="nav-dot"></span><span>人物·小号</span><b id="peopleCount">0</b></button>
+    </nav>
+
     <div id="postsPanel">
 
+      <div class="toolbar">
       <section class="searchbar">
         <label class="search" for="search">
           <span class="search-icon" aria-hidden="true">⌕</span>
@@ -109,6 +116,7 @@
         </select>
         <button id="advancedToggle" class="ghost" type="button" aria-expanded="false" aria-controls="advancedPanel">筛选 ▾</button>
       </section>
+      </div>
 
       <section id="advancedPanel" class="advanced" hidden>
         <label class="field"><span>保存账号</span><select id="accountFilter"><option value="all">所有账号</option></select></label>
