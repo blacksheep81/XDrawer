@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X 抽屉",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "在你自己的浏览器中整理 X 书签、喜欢和手动保存帖子的本地资料库",
   "permissions": ["tabs", "storage", "cookies"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],

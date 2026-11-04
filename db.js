@@ -1,5 +1,5 @@
 const DB_NAME = 'x-drawer';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const HISTORY_LIMIT = 200;
 
 function openDB() {
@@ -47,6 +47,7 @@ function openDB() {
           cursor.continue();
         };
       }
+      if (event.oldVersion < 6) db.createObjectStore('smartRules', { keyPath:'id' });
     };
     request.onblocked = () => reject(new Error('收藏库正被其他标签页占用，无法更新。请关闭所有 X 抽屉标签页后重新打开。'));
     request.onsuccess = () => resolve(request.result);
@@ -85,6 +86,90 @@ async function getAll(storeName) {
   } finally { db.close(); }
 }
 
+/* ── 智能分类 규칙 ───────────────────────────────
+   규칙은 키워드(任一/全部)·제외어·작성자로 글을 고른다. 태그가 있으면 맞는 글에 태그를 붙인다.
+   글의 ruleApplied에 "규칙ID:태그"를 남겨, 사용자가 태그를 지운 글에 다시 붙이지 않는다. */
+const RULE_LIMIT = 100;
+function splitTerms(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[,，、;；\s]+/);
+  return [...new Set(list.map(term => String(term).trim().toLocaleLowerCase().slice(0,60)).filter(Boolean))].slice(0,50);
+}
+function normalizeRule(raw) {
+  if (!raw || typeof raw !== 'object') throw new Error('无效的分类规则。');
+  const id = typeof raw.id === 'string' && /^[a-z0-9-]{1,80}$/.test(raw.id) ? raw.id : '';
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0,40) : '';
+  if (!id || !name) throw new Error('分类规则缺少名称。');
+  const keywords = splitTerms(raw.keywords);
+  const authors = splitTerms(raw.authors).map(handle => handle.replace(/^@/, '')).filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
+  if (!keywords.length && !authors.length) throw new Error('请至少填写一个关键词或作者。');
+  return {
+    id, name, keywords, authors,
+    match: raw.match === 'all' ? 'all' : 'any',
+    exclude: splitTerms(raw.exclude),
+    tag: typeof raw.tag === 'string' ? raw.tag.trim().replace(/^#/, '').slice(0,40) : '',
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt.slice(0,30) : new Date().toISOString()
+  };
+}
+function ruleText(item) {
+  return [item.text, item.note, item.author, item.username, item.url, ...(item.links || [])].join(' ').toLocaleLowerCase();
+}
+function ruleMatches(rule, item, text = ruleText(item)) {
+  if (rule.authors.length && !rule.authors.includes(String(item.username || '').toLowerCase())) return false;
+  if (rule.keywords.length && !(rule.match === 'all' ? rule.keywords.every(term => text.includes(term)) : rule.keywords.some(term => text.includes(term)))) return false;
+  return !rule.exclude.some(term => text.includes(term));
+}
+const ruleMark = rule => `${rule.id}:${rule.tag}`;
+/* 맞는 글이면 태그를 붙인 새 객체를, 아니면 null을 돌려준다. added는 태그가 실제로 새로 붙었는지 알려 준다. */
+function applyRuleTo(rule, item) {
+  const mark = ruleMark(rule);
+  const applied = Array.isArray(item.ruleApplied) ? item.ruleApplied : [];
+  if (!rule.tag || applied.includes(mark) || !ruleMatches(rule, item)) return null;
+  const tags = item.tags || [];
+  const added = !tags.includes(rule.tag) && tags.length < 20;
+  return { added, item: { ...item, tags: added ? [...tags, rule.tag] : tags, ruleApplied: [...applied, mark].slice(-200) } };
+}
+async function getRules() {
+  try { return (await getAll('smartRules')).map(rule => { try { return normalizeRule(rule); } catch { return null; } }).filter(Boolean); }
+  catch { return []; }
+}
+async function putRule(rule) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').put(normalizeRule(rule))); }
+async function deleteRule(id) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').delete(id)); }
+
+/* 기존 글에 규칙을 적용한다. 되돌리기에 쓸 수 있도록 표시만 남긴 글과 태그를 붙인 글을 따로 돌려준다. */
+async function applyRuleToPosts(rule, keys) {
+  const marked = [], added = [];
+  const at = new Date().toISOString();
+  await withTransaction(['posts','tags'], 'readwrite', tx => {
+    const store = tx.objectStore('posts');
+    registerTags(tx.objectStore('tags'), [rule.tag], at);
+    for (const key of keys) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const result = request.result && applyRuleTo(rule, request.result);
+        if (!result) return;
+        store.put(result.item);
+        marked.push(key);
+        if (result.added) added.push(key);
+      };
+    }
+  });
+  return { marked, added };
+}
+async function undoRuleApply(mark, tag, marked, added) {
+  const addedSet = new Set(added);
+  await withTransaction('posts', 'readwrite', tx => {
+    const store = tx.objectStore('posts');
+    for (const key of marked) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const item = request.result;
+        if (!item) return;
+        store.put({ ...item, tags: addedSet.has(key) ? (item.tags || []).filter(name => name !== tag) : item.tags, ruleApplied: (item.ruleApplied || []).filter(value => value !== mark) });
+      };
+    }
+  });
+}
+
 /* 새 태그 이름을 태그 목록에 등록한다. 이미 있으면 색과 메모를 유지한다. */
 function registerTags(store, names, at) {
   for (const name of new Set(names.filter(Boolean))) {
@@ -95,14 +180,24 @@ function registerTags(store, names, at) {
 
 async function savePosts(account, collection, items, mode = 'manual') {
   const at = new Date().toISOString();
-  await withTransaction(['posts', 'history'], 'readwrite', tx => {
+  const rules = (await getRules()).filter(rule => rule.tag);
+  await withTransaction(['posts', 'history', 'tags'], 'readwrite', tx => {
     const store = tx.objectStore('posts');
+    const tagStore = tx.objectStore('tags');
     for (const item of items) {
       const key = `${account}:${collection}:${item.id}`;
       const request = store.get(key);
       request.onsuccess = () => {
         const previous = request.result;
-        store.put({ ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', linkStatus:previous?.linkStatus || item.linkStatus || '', checkedAt:previous?.checkedAt || item.checkedAt || '', savedAt: previous?.savedAt || at, updatedAt: at });
+        let record = { ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], ruleApplied: previous?.ruleApplied || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', linkStatus:previous?.linkStatus || item.linkStatus || '', checkedAt:previous?.checkedAt || item.checkedAt || '', savedAt: previous?.savedAt || at, updatedAt: at };
+        // 새로 가져오거나 저장한 글에 자동 태그 규칙을 적용한다.
+        for (const rule of rules) {
+          const result = applyRuleTo(rule, record);
+          if (!result) continue;
+          record = result.item;
+          if (result.added) registerTags(tagStore, [rule.tag], at);
+        }
+        store.put(record);
       };
     }
     const historyStore = tx.objectStore('history');
@@ -135,7 +230,8 @@ async function importPosts(items) {
         if (!existing) { store.put(item); registerTags(tagStore, item.tags || [], at); return; }
         const tags = [...new Set([...(existing.tags || []), ...(item.tags || [])])].slice(0,20);
         registerTags(tagStore, tags, at);
-        store.put({ ...existing, avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, tags, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '' });
+        const ruleApplied = [...new Set([...(existing.ruleApplied || []), ...(item.ruleApplied || [])])].slice(-200);
+        store.put({ ...existing, avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, tags, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '' });
       };
     }
   });
@@ -199,16 +295,26 @@ async function updateManyPosts(keys, tags, readingState) {
 /* 태그 이름을 모든 글에서 한 번에 바꾼다. 같은 이름이 이미 있으면 합친다. */
 async function renameTagEverywhere(from, to) {
   const at = new Date().toISOString();
-  await withTransaction(['posts','tags'], 'readwrite', tx => {
+  await withTransaction(['posts','tags','smartRules'], 'readwrite', tx => {
     const posts = tx.objectStore('posts');
     const tagStore = tx.objectStore('tags');
+    // 이름이 바뀐 태그를 붙이는 규칙과 글의 적용 표시도 함께 옮긴다.
+    const renameMark = mark => { const cut = mark.indexOf(":"); return cut > 0 && mark.slice(cut + 1) === from ? `${mark.slice(0, cut)}:${to}` : mark; };
+    const rules = tx.objectStore('smartRules');
+    rules.openCursor().onsuccess = event => {
+      const cursor = event.target.result;
+      if (!cursor) return;
+      if (cursor.value.tag === from) cursor.update({ ...cursor.value, tag:to });
+      cursor.continue();
+    };
     posts.openCursor().onsuccess = event => {
       const cursor = event.target.result;
       if (!cursor) return;
       const tags = Array.isArray(cursor.value.tags) ? cursor.value.tags : [];
-      if (tags.includes(from)) {
+      const marks = Array.isArray(cursor.value.ruleApplied) ? cursor.value.ruleApplied : [];
+      if (tags.includes(from) || marks.some(mark => renameMark(mark) !== mark)) {
         const next = [...new Set(tags.map(tag => (tag === from ? to : tag)))].slice(0,20);
-        cursor.update({ ...cursor.value, tags:next, updatedAt:at });
+        cursor.update({ ...cursor.value, tags:next, ruleApplied:[...new Set(marks.map(renameMark))], updatedAt:at });
       }
       cursor.continue();
     };

@@ -70,6 +70,24 @@
 .nav.active[data-tone="all"] .nav-dot,
 .nav.active[data-tone="people"] .nav-dot { background: var(--faint); }
 
+/* 智能分类·作者·账号 묶음: 서랍장 아래 칸. 길어지면 이 칸만 스크롤한다. */
+.rail-groups { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 18px; margin: -8px -6px 0; padding: 0 6px; scrollbar-width: thin; }
+.rail-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 6px; }
+.rail-group h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--rail-muted); }
+.rail-add { padding: 1px 7px; border: 1px solid transparent; border-radius: var(--r-sm); background: none; color: var(--rail-muted); font-size: 14px; line-height: 1.4; cursor: pointer; }
+.rail-add:hover { border-color: var(--rail-line); color: var(--rail-ink); }
+.rail-more { font-size: 11px; }
+.rail-list { display: grid; gap: 1px; }
+.rail-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--r-sm); background: none; color: var(--rail-ink); font-size: 13px; text-align: left; cursor: pointer; }
+.rail-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-item b { font-size: 11.5px; font-weight: 400; color: var(--rail-muted); font-variant-numeric: tabular-nums; }
+.rail-item i { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--rail-muted); }
+.rail-item[data-kind="rule"] i { border-radius: 1px; background: #e0b04c; }
+.rail-item:hover { background: var(--rail-2); }
+.rail-item.active { background: var(--rail-3); box-shadow: inset 2px 0 0 #e0b04c; }
+.rail-empty { margin: 0; padding: 2px 8px; font-size: 12px; line-height: 1.5; color: var(--rail-muted); }
+.rail-empty button { padding: 0; border: 0; background: none; color: var(--rail-ink); text-decoration: underline; font: inherit; cursor: pointer; }
+
 .rail-foot { margin-top: auto; display: grid; gap: 12px; }
 .rail-foot .theme-switch { width: 100%; }
 .rail-foot .theme-switch button { flex: 1; }
@@ -760,6 +778,13 @@ dialog textarea { resize: vertical; font-family: inherit; }
   .nav.active { margin-right: 0; border-radius: var(--r-sm) var(--r-sm) 0 0; }
   .rail-foot { flex: 0 0 auto; margin: 0 0 8px auto; }
   .rail-note { display: none; }
+  .rail-groups { display: flex; flex: 0 0 auto; gap: 10px; margin: 0; padding: 0 0 8px; overflow: visible; }
+  .rail-group { display: flex; align-items: center; gap: 4px; }
+  .rail-group-head { padding: 0; }
+  .rail-group h2, .rail-more, #authorGroup, #accountGroup { display: none; }
+  .rail-list { display: flex; gap: 4px; }
+  .rail-item { width: auto; white-space: nowrap; border: 1px solid var(--rail-line); }
+  .rail-item span { overflow: visible; }
   main { padding: 22px 16px 54px; }
   .page-head { flex-wrap: wrap; }
   .filterbar select { flex: 1 1 140px; max-width: none; }
@@ -767,3 +792,17 @@ dialog textarea { resize: vertical; font-family: inherit; }
 }
 
 .cards > .load-more { grid-column: 1 / -1; justify-self: center; margin: 6px 0 18px; padding: 9px 16px; }
+
+/* ── 智能分类 대화상자 ───────────────────────── */
+.rule-mode { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: -6px 0 0; }
+dialog .rule-mode label.check { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12.5px; color: var(--ink-2); }
+dialog .rule-mode input[type="radio"] { width: auto; margin: 0; padding: 0; accent-color: var(--btn-ink); }
+.rule-preview { margin-top: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+.rule-preview:empty { display: none; }
+.rule-preview strong { color: var(--ink); }
+.rule-preview ul { margin: 6px 0 0; padding: 0; list-style: none; }
+.rule-preview li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.rule-preview li b { color: var(--ink-2); font-weight: 600; }
+.dialog-actions .danger-text { margin-right: auto; color: var(--bad); }
+.notice .notice-action { margin-left: 10px; padding: 3px 10px; border: 1px solid currentColor; border-radius: var(--r-sm); background: none; color: inherit; font-size: 12px; cursor: pointer; }
+.rule-preview .error-text { color: var(--bad); }

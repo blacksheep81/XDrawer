@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 
-let posts = [], history = [], people = [], tagMeta = [], savedViews = [];
+let posts = [], history = [], people = [], tagMeta = [], savedViews = [], smartRules = [];
+let activeRuleId = '', authorExpanded = false;
 let view = 'all', activeTab = null, editingTagKey = null, scanPaused = false;
 let editingTags = [], bulkTags = [];
 const activeTags = new Set();
@@ -59,10 +60,23 @@ function normalizePost(item) {
   const links = safeList(item.links).filter(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } });
   const tags = Array.isArray(item.tags) ? [...new Set(item.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0,40)).filter(Boolean))].slice(0,20) : [];
   const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', linkStatus:['available','unavailable','unknown'].includes(item.linkStatus) ? item.linkStatus : '', checkedAt:string('checkedAt').slice(0,30) };
+  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', linkStatus:['available','unavailable','unknown'].includes(item.linkStatus) ? item.linkStatus : '', checkedAt:string('checkedAt').slice(0,30), ruleApplied:Array.isArray(item.ruleApplied) ? item.ruleApplied.filter(x => typeof x === 'string' && x.length <= 130).slice(-200) : [] };
 }
 
-function notice(message, error = false) { const el = $('#notice'); el.textContent = message; el.hidden = false; el.classList.toggle('error', error); }
+function notice(message, error = false, action = null) {
+  const el = $('#notice');
+  el.textContent = message;
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'notice-action';
+    button.textContent = action.label;
+    button.addEventListener('click', () => { button.disabled = true; action.run(); }, { once:true });
+    el.append(button);
+  }
+  el.hidden = false;
+  el.classList.toggle('error', error);
+}
 function clearNotice() { $('#notice').hidden = true; }
 
 function localDay(iso) {
@@ -172,8 +186,11 @@ async function refresh() {
   history = await getAll('history');
   people = await getAll('people');
   tagMeta = await getAll('tags');
+  smartRules = await getRules();
+  if (activeRuleId && !smartRules.some(rule => rule.id === activeRuleId)) activeRuleId = '';
   tagColors = new Map(tagMeta.map(meta => [meta.name, safeColor(meta.color)]));
   renderSourceFilters();
+  renderRail();
   const keys = new Set(posts.map(item => item.key));
   for (const key of selectedKeys) if (!keys.has(key)) selectedKeys.delete(key);
   render();
@@ -209,6 +226,7 @@ async function refreshSavedViews() { savedViews = await getAll('savedViews'); re
 
 function applyViewSettings(settings) {
   view = ['all','bookmark','like','saved'].includes(settings.view) ? settings.view : 'all';
+  activeRuleId = '';
   activeTags.clear();
   const tags = Array.isArray(settings.tags) ? settings.tags : (settings.tag && settings.tag !== 'all' ? [settings.tag] : []);
   for (const tag of tags) if (typeof tag === 'string' && tag) activeTags.add(tag);
@@ -261,8 +279,10 @@ function filteredPosts(parsed) {
   const linkFilter = $('#linkFilter').value;
   const from = $('#fromDate').value, to = $('#toDate').value;
   const untaggedOnly = $('#untaggedOnly').checked;
+  const rule = activeRule();
   return posts.filter(item => {
     if (view !== 'all' && item.collection !== view) return false;
+    if (rule && !ruleMatches(rule, item, ruleTextOf(item))) return false;
     if (account !== 'all' && (item.account || 'legacy') !== account) return false;
     if (author !== 'all' && item.username !== author) return false;
     if (media !== 'all' && item.media !== media) return false;
@@ -361,14 +381,18 @@ function render() {
   $('#postsPanel').hidden = !isPosts;
   $('#peoplePanel').hidden = view !== 'people';
   $('#scanButton').hidden = !['all','bookmark','like'].includes(view);
-  $('#title').textContent = titles[view];
-  $('#subtitle').textContent = subtitles[view];
+  const rule = activeRule();
+  $('#title').textContent = rule ? rule.name : titles[view];
+  $('#subtitle').textContent = rule ? describeRule(rule) : subtitles[view];
+  $('#editRule').hidden = !rule;
+  updateApplyRuleButton(rule);
   $('#allCount').textContent = posts.length;
   $('#bookmarkCount').textContent = posts.filter(item => item.collection === 'bookmark').length;
   $('#likeCount').textContent = posts.filter(item => item.collection === 'like').length;
   $('#savedCount').textContent = posts.filter(item => item.collection === 'saved').length;
   $('#peopleCount').textContent = people.length;
-  document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+  document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', !rule && button.dataset.view === view));
+  updateRailActive();
   if (!isPosts) return;
 
   renderTagBar();
@@ -418,6 +442,7 @@ function renderPosts() {
     : `${filtered.length.toLocaleString('zh-CN')} 个保存项，合并为 ${groups.length.toLocaleString('zh-CN')} 张卡片`)
     + (filterCount ? `，已应用 ${filterCount} 个筛选` : '');
   $('#resetFilters').disabled = $('#resetFilters').hidden = filterCount === 0;
+  $('#searchToRule').hidden = !$('#search').value.trim() && $('#authorFilter').value === 'all';
   const panelFilters = filterCount - ($('#search').value.trim() ? 1 : 0);
   $('#advancedToggle').textContent = `筛选${panelFilters ? ` · ${panelFilters}` : ''} ${$('#advancedPanel').hidden ? '▾' : '▴'}`;
 
@@ -470,6 +495,199 @@ function showMoreCards() {
 }
 $('#cards').addEventListener('click', event => { if (event.target.closest('.load-more')) showMoreCards(); });
 
+/* ── 智能分类·按作者·按保存账号 ────────────────── */
+const ruleTextCache = new WeakMap();
+function ruleTextOf(item) {
+  let text = ruleTextCache.get(item);
+  if (text === undefined) { text = ruleText(item); ruleTextCache.set(item, text); }
+  return text;
+}
+function activeRule() { return activeRuleId ? smartRules.find(rule => rule.id === activeRuleId) || null : null; }
+function rulePosts(rule) { return posts.filter(item => ruleMatches(rule, item, ruleTextOf(item))); }
+function describeRule(rule) {
+  const parts = [];
+  if (rule.keywords.length) parts.push(`${rule.match === 'all' ? '包含全部' : '包含任一'}：${rule.keywords.join('、')}`);
+  if (rule.authors.length) parts.push(`作者：${rule.authors.map(handle => '@' + handle).join('、')}`);
+  if (rule.exclude.length) parts.push(`排除：${rule.exclude.join('、')}`);
+  if (rule.tag) parts.push(`自动添加标签「${rule.tag}」`);
+  return parts.join(' · ');
+}
+/* 아직 이 규칙이 적용되지 않은(표시가 없는) 맞는 글 */
+function pendingRulePosts(rule) {
+  if (!rule?.tag) return [];
+  const mark = ruleMark(rule);
+  return rulePosts(rule).filter(item => !(item.ruleApplied || []).includes(mark));
+}
+function updateApplyRuleButton(rule) {
+  const pending = rule ? pendingRulePosts(rule).length : 0;
+  $('#applyRule').hidden = !pending;
+  $('#applyRule').textContent = `为 ${pending.toLocaleString('zh-CN')} 条已有帖子加「${rule?.tag || ''}」`;
+}
+
+function railItem(kind, value, label, count, title = '') {
+  return `<button type="button" class="rail-item" data-kind="${kind}" data-value="${escapeHTML(value)}"${title ? ` title="${escapeHTML(title)}"` : ''}><i></i><span>${escapeHTML(label)}</span><b>${count.toLocaleString('zh-CN')}</b></button>`;
+}
+/* 레일 목록은 글이나 규칙이 바뀔 때만 다시 만든다. 선택 표시는 updateRailActive()가 맡는다. */
+function renderRail() {
+  $('#ruleList').innerHTML = smartRules.length
+    ? [...smartRules].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')).map(rule => railItem('rule', rule.id, rule.name, rulePosts(rule).length, describeRule(rule))).join('')
+    : '<p class="rail-empty">按关键词或作者自动归类。<button type="button" data-action="new-rule">新建分类</button></p>';
+
+  const authorCounts = new Map();
+  for (const item of posts) {
+    if (!item.username) continue;
+    const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
+    entry.count++;
+    authorCounts.set(item.username, entry);
+  }
+  const authors = [...authorCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
+  const limit = authorExpanded ? 40 : 8;
+  $('#authorGroup').hidden = !authors.length;
+  $('#authorList').innerHTML = authors.slice(0, limit).map(([username, entry]) => railItem('author', username, entry.name, entry.count, `@${username}`)).join('');
+  $('#authorMore').hidden = authors.length <= 8;
+  $('#authorMore').textContent = authorExpanded ? '收起' : `更多 ${Math.min(authors.length, 40) - 8}`;
+  $('#authorMore').setAttribute('aria-expanded', String(authorExpanded));
+
+  const accountCounts = new Map();
+  for (const item of posts) {
+    const account = item.account || 'legacy';
+    const entry = accountCounts.get(account) || { count:0, name:account };
+    entry.count++;
+    if (item.accountName) entry.name = item.accountName;
+    accountCounts.set(account, entry);
+  }
+  $('#accountGroup').hidden = accountCounts.size < 2;
+  $('#accountList').innerHTML = [...accountCounts.entries()].sort((a, b) => b[1].count - a[1].count)
+    .map(([account, entry]) => railItem('account', account, '@' + entry.name, entry.count)).join('');
+  updateRailActive();
+}
+function updateRailActive() {
+  const author = $('#authorFilter').value, account = $('#accountFilter').value;
+  document.querySelectorAll('.rail-item').forEach(item => {
+    const { kind, value } = item.dataset;
+    const on = kind === 'rule' ? value === activeRuleId : kind === 'author' ? value === author : value === account;
+    item.classList.toggle('active', on);
+    item.setAttribute('aria-pressed', String(on));
+  });
+}
+
+document.querySelector('.rail-groups').addEventListener('click', event => {
+  if (event.target.closest('[data-action="new-rule"]')) { openRuleDialog(); return; }
+  const item = event.target.closest('.rail-item');
+  if (!item) return;
+  const { kind, value } = item.dataset;
+  if (view === 'people') view = 'all';
+  if (kind === 'rule') {
+    activeRuleId = activeRuleId === value ? '' : value;
+    if (activeRuleId) view = 'all';
+  } else {
+    const select = $(kind === 'author' ? '#authorFilter' : '#accountFilter');
+    select.value = select.value === value ? 'all' : value;
+  }
+  render();
+});
+$('#authorMore').addEventListener('click', () => { authorExpanded = !authorExpanded; renderRail(); });
+
+/* 규칙 편집 대화상자 */
+let editingRuleId = '';
+function ruleFromForm() {
+  return {
+    id: editingRuleId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
+    name: $('#ruleName').value,
+    keywords: $('#ruleKeywords').value,
+    match: document.querySelector('input[name="ruleMatch"]:checked')?.value,
+    exclude: $('#ruleExclude').value,
+    authors: $('#ruleAuthors').value,
+    tag: $('#ruleTag').value,
+    createdAt: smartRules.find(rule => rule.id === editingRuleId)?.createdAt
+  };
+}
+function updateRulePreview() {
+  let rule;
+  try { rule = normalizeRule({ ...ruleFromForm(), name: $('#ruleName').value.trim() || '预览' }); }
+  catch { $('#rulePreview').innerHTML = '<span class="muted">填写关键词或作者后，这里会显示命中的帖子。</span>'; return; }
+  const matches = rulePosts(rule);
+  const pending = rule.tag ? pendingRulePosts(rule).length : 0;
+  const sample = matches.slice(0, 4).map(item => `<li><b>${escapeHTML(item.author || item.username)}</b>：${escapeHTML((item.text || '').replace(/\s+/g, ' ').slice(0, 80))}</li>`).join('');
+  $('#rulePreview').innerHTML = `命中 <strong>${matches.length.toLocaleString('zh-CN')}</strong> 条帖子`
+    + (rule.tag ? `，其中 ${pending.toLocaleString('zh-CN')} 条保存后可以补上「${escapeHTML(rule.tag)}」标签` : '')
+    + (sample ? `<ul>${sample}</ul>` : '');
+}
+function openRuleDialog(rule = null, prefill = {}) {
+  editingRuleId = rule?.id || '';
+  const source = rule || prefill;
+  $('#ruleDialogTitle').textContent = rule ? '编辑智能分类' : '新建智能分类';
+  $('#ruleName').value = source.name || '';
+  $('#ruleKeywords').value = (source.keywords || []).join(', ');
+  $('#ruleExclude').value = (source.exclude || []).join(', ');
+  $('#ruleAuthors').value = (source.authors || []).map(handle => '@' + handle).join(', ');
+  $('#ruleTag').value = source.tag || '';
+  document.querySelector(`input[name="ruleMatch"][value="${source.match === 'all' ? 'all' : 'any'}"]`).checked = true;
+  $('#deleteRuleButton').hidden = !rule;
+  updateRulePreview();
+  $('#ruleDialog').showModal();
+  $('#ruleName').focus();
+}
+$('#ruleForm').addEventListener('input', updateRulePreview);
+$('#cancelRule').addEventListener('click', () => $('#ruleDialog').close());
+$('#newRule').addEventListener('click', () => openRuleDialog());
+$('#editRule').addEventListener('click', () => { const rule = activeRule(); if (rule) openRuleDialog(rule); });
+$('#searchToRule').addEventListener('click', () => {
+  const parsed = parseQuery($('#search').value.trim());
+  const author = $('#authorFilter').value;
+  const authors = [...parsed.from, ...(author !== 'all' ? [author] : [])].filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
+  const name = parsed.include[0] || (author !== 'all' ? $('#authorFilter').selectedOptions[0]?.textContent.split(' · ')[0] : '') || '';
+  openRuleDialog(null, { name, keywords:parsed.include, exclude:parsed.exclude, authors, match:'all' });
+});
+$('#ruleForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  let rule;
+  try { rule = normalizeRule(ruleFromForm()); }
+  catch (error) { $('#rulePreview').innerHTML = `<span class="error-text">${escapeHTML(error.message)}</span>`; return; }
+  if (!editingRuleId && smartRules.length >= RULE_LIMIT) { $('#rulePreview').textContent = `最多可以创建 ${RULE_LIMIT} 个智能分类。`; return; }
+  try {
+    await putRule(rule);
+    $('#ruleDialog').close();
+    activeRuleId = rule.id;
+    view = 'all';
+    await refresh();
+    const pending = pendingRulePosts(rule).length;
+    if (pending) notice(`已保存分类「${rule.name}」。之后导入的匹配帖子会自动加上「${rule.tag}」标签。`, false, { label:`现在为 ${pending} 条已有帖子加标签`, run:() => applyActiveRule() });
+    else notice(`已保存分类「${rule.name}」。`);
+  } catch (error) { notice(`保存分类失败：${error.message}`, true); }
+});
+$('#deleteRuleButton').addEventListener('click', async () => {
+  const rule = smartRules.find(item => item.id === editingRuleId);
+  if (!rule) return;
+  $('#ruleDialog').close();
+  if (!await confirmAction('删除智能分类', `删除「${rule.name}」后，帖子和已添加的标签都会保留。`, '删除分类')) return;
+  try { await deleteRule(rule.id); if (activeRuleId === rule.id) activeRuleId = ''; await refresh(); notice(`已删除分类「${rule.name}」。`); }
+  catch (error) { notice(`删除分类失败：${error.message}`, true); }
+});
+
+async function applyActiveRule() {
+  const rule = activeRule();
+  const pending = pendingRulePosts(rule);
+  if (!rule || !pending.length) return;
+  try {
+    const { marked, added } = await applyRuleToPosts(rule, pending.map(item => item.key));
+    await refresh();
+    notice(`已为 ${added.length.toLocaleString('zh-CN')} 条帖子添加「${rule.tag}」标签${marked.length > added.length ? `（${marked.length - added.length} 条原本已有）` : ''}。`, false, {
+      label:'撤销',
+      run: async () => {
+        try { await undoRuleApply(ruleMark(rule), rule.tag, marked, added); await refresh(); notice(`已撤销，移除了这次添加的 ${added.length} 个「${rule.tag}」标签。`); }
+        catch (error) { notice(`撤销失败：${error.message}`, true); }
+      }
+    });
+  } catch (error) { notice(`添加标签失败：${error.message}`, true); }
+}
+$('#applyRule').addEventListener('click', async () => {
+  const rule = activeRule();
+  const count = pendingRulePosts(rule).length;
+  if (!count) return;
+  if (await confirmAction('整理已有帖子', `将为「${rule.name}」中 ${count} 条已有帖子添加「${rule.tag}」标签。之后可以撤销。`, '添加标签')) applyActiveRule();
+});
+
 /* ── 확인 대화상자 ───────────────────────────── */
 $('#confirmCancel').addEventListener('click', () => $('#confirmDialog').close('cancel'));
 $('#confirmOk').addEventListener('click', () => $('#confirmDialog').close('ok'));
@@ -487,7 +705,7 @@ function confirmAction(title, text, okLabel) {
 }
 
 /* ── 네비게이션·필터 연결 ────────────────────── */
-document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => { view = button.dataset.view; render(); }));
+document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => { view = button.dataset.view; activeRuleId = ''; render(); }));
 
 /* 검색어는 입력이 잠깐 멈춘 뒤에 반영해, 글자마다 전체를 다시 그리지 않는다. */
 let renderTimer = 0;
@@ -1038,12 +1256,13 @@ $('#exportButton').addEventListener('click', async () => {
     const allPosts = await getAll('posts');
     const payload = {
       format:'x-drawer-backup',
-      version:6,
+      version:7,
       exportedAt:new Date().toISOString(),
       posts:allPosts,
       people:await getAll('people'),
       savedViews:await getAll('savedViews'),
-      tags:await getAll('tags')
+      tags:await getAll('tags'),
+      smartRules:await getRules()
     };
     downloadFile(`x-drawer-${localDay(new Date().toISOString())}.json`, new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
     notice(`已将 ${allPosts.length.toLocaleString('zh-CN')} 条帖子导出为 JSON 备份。`);
@@ -1092,7 +1311,7 @@ $('#importFile').addEventListener('change', async event => {
   try {
     if (file.size > 50 * 1024 * 1024) throw new Error('只能导入不超过 50MB 的备份文件。');
     const backup = JSON.parse(await file.text());
-    if (backup.format !== 'x-drawer-backup' || ![1,2,3,4,5,6].includes(backup.version) || !Array.isArray(backup.posts)) throw new Error('不支持此备份格式。');
+    if (backup.format !== 'x-drawer-backup' || ![1,2,3,4,5,6,7].includes(backup.version) || !Array.isArray(backup.posts)) throw new Error('不支持此备份格式。');
     if (backup.posts.length > 100000) throw new Error('一次最多只能导入 10 万条帖子。');
     const items = backup.posts.map(normalizePost);
 
@@ -1125,6 +1344,10 @@ $('#importFile').addEventListener('change', async event => {
       return { name, color:safeColor(entry.color), createdAt:typeof entry.createdAt === 'string' ? entry.createdAt.slice(0,30) : '' };
     });
 
+    const ruleItems = backup.version >= 7 ? backup.smartRules : [];
+    if (!Array.isArray(ruleItems) || ruleItems.length > RULE_LIMIT) throw new Error('智能分类的格式或数量无效。');
+    const validRules = ruleItems.map(normalizeRule);
+
     await importPosts(items);
     await withTransaction('people', 'readwrite', tx => {
       const peopleStore = tx.objectStore('people');
@@ -1151,9 +1374,17 @@ $('#importFile').addEventListener('change', async event => {
       }
     });
 
+    await withTransaction('smartRules', 'readwrite', tx => {
+      const store = tx.objectStore('smartRules');
+      for (const rule of validRules) {
+        const request = store.get(rule.id);
+        request.onsuccess = () => { if (!request.result) store.put(rule); };
+      }
+    });
+
     await refresh();
     await refreshSavedViews();
-    notice(`已导入 ${items.length} 条帖子、${validPeople.length} 条人物记录、${validViews.length} 个已保存视图和 ${validTags.length} 个标签。`);
+    notice(`已导入 ${items.length} 条帖子、${validPeople.length} 条人物记录、${validViews.length} 个已保存视图、${validTags.length} 个标签和 ${validRules.length} 个智能分类。`);
   } catch (error) { notice(`文件导入失败：${error.message}`, true); }
   event.target.value = '';
 });

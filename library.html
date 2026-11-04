@@ -26,6 +26,27 @@
       <button class="nav" data-view="people" data-tone="people"><span class="nav-dot"></span><span>人物·小号</span><b id="peopleCount">0</b></button>
     </nav>
 
+    <div class="rail-groups">
+      <section class="rail-group" aria-labelledby="ruleGroupTitle">
+        <div class="rail-group-head">
+          <h2 id="ruleGroupTitle">智能分类</h2>
+          <button id="newRule" class="rail-add" type="button" title="新建智能分类" aria-label="新建智能分类">＋</button>
+        </div>
+        <div id="ruleList" class="rail-list"></div>
+      </section>
+      <section class="rail-group" id="authorGroup" aria-labelledby="authorGroupTitle">
+        <div class="rail-group-head">
+          <h2 id="authorGroupTitle">按作者</h2>
+          <button id="authorMore" class="rail-add rail-more" type="button" aria-expanded="false">更多</button>
+        </div>
+        <div id="authorList" class="rail-list"></div>
+      </section>
+      <section class="rail-group" id="accountGroup" aria-labelledby="accountGroupTitle" hidden>
+        <div class="rail-group-head"><h2 id="accountGroupTitle">按保存账号</h2></div>
+        <div id="accountList" class="rail-list"></div>
+      </section>
+    </div>
+
     <div class="rail-foot">
       <div class="theme-switch" id="themeToggle" role="group" aria-label="界面主题">
         <button type="button" data-theme-set="system" title="跟随系统设置">系统</button>
@@ -43,6 +64,8 @@
         <p id="subtitle" class="subtitle">搜索、筛选和整理你保存的全部帖子。</p>
       </div>
       <div class="head-actions">
+        <button id="editRule" class="ghost" type="button" hidden>编辑分类</button>
+        <button id="applyRule" class="ghost" type="button" hidden>整理已有帖子</button>
         <button id="manageTags" class="ghost" type="button">标签管理</button>
         <button id="scanButton" class="primary" type="button">从 X 导入</button>
       </div>
@@ -55,6 +78,7 @@
           <span class="search-icon" aria-hidden="true">⌕</span>
           <input id="search" type="search" autocomplete="off" placeholder='搜索帖子，点击查看筛选语法'>
         </label>
+        <button id="searchToRule" class="ghost" type="button" hidden>保存为智能分类</button>
         <button id="resetFilters" class="ghost" type="button" hidden>重置筛选</button>
         <p class="search-tip">
         <code>"设计系统"</code> 精确短语
@@ -291,6 +315,29 @@
   <div class="dialog-actions">
     <button id="closeTagManager" type="button">关闭</button>
   </div>
+</dialog>
+
+<dialog id="ruleDialog">
+  <form id="ruleForm" method="dialog">
+    <h2 id="ruleDialogTitle">新建智能分类</h2>
+    <p>符合条件的帖子会自动出现在这个分类里，之后导入的帖子也会进入。</p>
+    <label>名称<input id="ruleName" type="text" maxlength="40" placeholder="例如：AI 开发" required></label>
+    <label>关键词<input id="ruleKeywords" type="text" maxlength="1000" placeholder="Claude, Codex, Cursor"></label>
+    <div class="rule-mode" role="radiogroup" aria-label="关键词匹配方式">
+      <label class="check"><input type="radio" name="ruleMatch" value="any" checked> 包含任一关键词</label>
+      <label class="check"><input type="radio" name="ruleMatch" value="all"> 包含全部关键词</label>
+    </div>
+    <label>排除关键词<input id="ruleExclude" type="text" maxlength="1000" placeholder="抽奖, 广告"></label>
+    <label>作者<input id="ruleAuthors" type="text" maxlength="1000" placeholder="@anthropicai, @openai"></label>
+    <label>自动添加标签（可选）<input id="ruleTag" type="text" maxlength="40" placeholder="留空则只分类，不修改帖子"></label>
+    <p class="fine">多个词用逗号或空格分隔。关键词匹配正文、备注、作者和链接；同时填写关键词和作者时，两者都要满足。</p>
+    <div id="rulePreview" class="rule-preview" role="status"></div>
+    <div class="dialog-actions">
+      <button id="deleteRuleButton" class="danger-text" type="button" hidden>删除分类</button>
+      <button id="cancelRule" type="button">取消</button>
+      <button id="saveRule" type="submit" class="primary">保存</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="confirmDialog">
