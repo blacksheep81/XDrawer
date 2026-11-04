@@ -326,8 +326,25 @@ function activeFilterCount() {
   return count;
 }
 
+/* 펼친 글은 다시 그려도 펼친 채로 둔다. 이 기기의 화면 상태일 뿐이라 저장하지 않는다. */
+const expandedKeys = new Set();
+const textId = key => key.replace(/[^a-zA-Z0-9_-]/g, '_');
+/* 본문이 카드 높이를 넘는지 재서 "展开全文" 버튼을 보이거나 숨긴다. 글자 수가 아니라 실제 높이로 판단해 보기 방식마다 맞게 동작한다. */
+function measureCardText(texts = $('#cards').querySelectorAll('.post-text')) {
+  for (const text of texts) {
+    const button = text.nextElementSibling;
+    if (!button?.classList.contains('expand-text') || text.classList.contains('expanded')) continue;
+    const overflow = text.scrollHeight > text.clientHeight + 1;
+    text.classList.toggle('truncated', overflow);
+    button.hidden = !overflow;
+  }
+}
+let measureTimer = 0;
+window.addEventListener('resize', () => { clearTimeout(measureTimer); measureTimer = setTimeout(() => measureCardText(), 150); });
+
 function cardHTML(group, terms) {
   const item = group[0];
+  const expanded = expandedKeys.has(item.key);
   const keys = group.map(post => post.key);
   const keyData = escapeHTML(JSON.stringify(keys));
   const allSelected = keys.every(key => selectedKeys.has(key));
@@ -361,7 +378,8 @@ function cardHTML(group, terms) {
 <div class="identity"><strong>${escapeHTML(item.author || item.username)}</strong><span>@${escapeHTML(item.username)}<em>保存账号 @${escapeHTML(item.accountName || item.account || 'legacy')}</em></span></div>
 <span class="pill" data-kind="${escapeHTML(item.collection)}">${kindMarks[item.collection] || escapeHTML(item.collection)}</span>
 </div>${duplicateNote}
-<p class="post-text">${highlightText(item.text || '(未能获取正文)', terms)}</p>
+<p class="post-text${expanded ? ' expanded' : ''}" id="text-${escapeHTML(textId(item.key))}">${highlightText(item.text || '(未能获取正文)', terms)}</p>
+<button type="button" class="expand-text" data-key="${escapeHTML(item.key)}" aria-controls="text-${escapeHTML(textId(item.key))}" aria-expanded="${expanded}"${expanded ? '' : ' hidden'}>${expanded ? '收起' : '展开全文'}</button>
 ${item.note ? `<p class="post-note">备注：${highlightText(item.note, terms)}</p>` : ''}
 ${item.imageUrls?.[0] ? `<img class="preview" src="${escapeHTML(item.imageUrls[0])}" alt="帖子图片" loading="lazy">` : ''}
 ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
@@ -480,6 +498,7 @@ function showMoreCards() {
   const next = renderedGroups.slice(shownCount, shownCount + RENDER_BATCH);
   shownCount += next.length;
   cards.insertAdjacentHTML('beforeend', next.map(group => cardHTML(group, renderedTerms)).join(''));
+  measureCardText([...cards.querySelectorAll('.post-text')].slice(-next.length));
   for (const input of [...cards.querySelectorAll('.post-select')].slice(-next.length)) {
     const keys = JSON.parse(input.dataset.keys);
     input.indeterminate = keys.some(key => selectedKeys.has(key)) && !keys.every(key => selectedKeys.has(key));
@@ -1086,6 +1105,19 @@ async function checkOriginalPost(key, button) {
 }
 
 $('#cards').addEventListener('click', async event => {
+  const expandButton = event.target.closest('.expand-text');
+  if (expandButton) {
+    const text = expandButton.previousElementSibling;
+    const expand = !text.classList.contains('expanded');
+    if (expand) expandedKeys.add(expandButton.dataset.key); else expandedKeys.delete(expandButton.dataset.key);
+    text.classList.toggle('expanded', expand);
+    text.classList.toggle('truncated', !expand);
+    expandButton.textContent = expand ? '收起' : '展开全文';
+    expandButton.setAttribute('aria-expanded', String(expand));
+    // 긴 글을 접으면 카드 윗부분이 화면 밖으로 밀려날 수 있어 다시 보이게 한다.
+    if (!expand) { const card = expandButton.closest('.card'); if (card.getBoundingClientRect().top < 0) card.scrollIntoView({ block:'start' }); }
+    return;
+  }
   const tagChip = event.target.closest('.card-tag');
   if (tagChip) {
     const tag = tagChip.dataset.tag;
