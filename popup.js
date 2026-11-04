@@ -60,5 +60,4 @@ $('#popStats').addEventListener('click', event => {
 $('#popOpen').addEventListener('click', () => openLibrary({}));
 $('#popScan').addEventListener('click', () => openLibrary({ scan: '1' }));
 
-if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 loadStats();

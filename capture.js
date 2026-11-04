@@ -31,9 +31,15 @@ function extractArticle(article) {
     const hasImage = imageUrls.length > 0 || !!article.querySelector('[data-testid="tweetPhoto"]');
     return { id, url: `https://x.com/${username}/status/${id}`, username, author, avatarUrl, text, date: time, imageUrls: [...new Set(imageUrls)], links: [...new Set(links)], media: hasVideo ? 'video' : hasImage ? 'image' : 'text' };
 }
+/* 타임라인에 끼어든 광고 글. 광고 표시가 있는 글은 북마크나 좋아요가 아니므로 읽지 않는다. */
+function isPromoted(article) {
+  if (article.closest('[data-testid="placementTracking"]')) return true;
+  return [...article.querySelectorAll('span')].some(span => /^(?:Ad|Promoted|广告|推广|廣告|已推广|프로모션|광고)$/.test(span.textContent.trim()));
+}
 function extract() {
   const found = new Map();
   for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
+    if (isPromoted(article)) continue;
     const post = extractArticle(article);
     if (post) found.set(post.id, post);
   }
@@ -86,15 +92,6 @@ if (document.body) {
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message.type === 'PROFILE') {
     respond({ profile:currentProfile() });
-    return;
-  }
-  if (message.type === 'CHECK_POST') {
-    const id = parseStatusPath(new URL(location.href).pathname)?.id;
-    if (!id || id !== message.id) { respond({ status:'unknown' }); return; }
-    const found = [...document.querySelectorAll('article[data-testid="tweet"]')].some(article => extractArticle(article)?.id === id);
-    const mainText = document.querySelector('main')?.innerText || '';
-    const unavailable = /This (?:Post|Tweet) is unavailable|This account doesn.?t exist|이 게시물은 (?:존재하지 않|사용할 수 없)|이 계정은 존재하지 않|(?:帖子|推文|貼文)[^\n]{0,8}(?:不可用|不存在|无法|無法)|(?:账号|账户|帳號|帳戶)[^\n]{0,4}不存在/i.test(mainText);
-    respond({ status:found ? 'available' : unavailable ? 'unavailable' : 'unknown' });
     return;
   }
   if (message.type !== 'SCAN_STEP') return;
