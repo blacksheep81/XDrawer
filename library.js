@@ -456,9 +456,11 @@ function renderPosts() {
   $('#cards').innerHTML = groups.length
     ? ''
     : `<div class="empty"><span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-<h2>${filterCount ? '没有符合条件的帖子' : '还没有保存的帖子'}</h2>
+<h2>${filterCount ? '没有符合条件的帖子' : activeRule() ? '这个分类还没有帖子' : '还没有保存的帖子'}</h2>
 <p>${filterCount
-  ? '试试更改搜索词或筛选条件，或点击“重置筛选”。'
+  ? `${activeRule() ? `当前只在分类「${escapeHTML(activeRule().name)}」里查找。` : view !== 'all' ? `当前只在「${escapeHTML(titles[view])}」里查找。` : ''}试试更改搜索词或筛选条件，或点击“重置筛选”。`
+  : activeRule()
+    ? '可以点击“编辑分类”调整条件。'
   : view === 'saved'
     ? '试试点击 X 帖子页面右下角的“✦ 保存到 X 抽屉”按钮。'
     : '登录 X 后，点击“＋ 从 X 导入”试试。'}</p></div>`;
@@ -608,16 +610,19 @@ document.querySelector('.rail-groups').addEventListener('click', event => {
   const item = event.target.closest('.rail-item');
   if (!item) return;
   const { kind, value } = item.dataset;
-  if (view === 'people') view = 'all';
-  if (kind === 'rule') {
-    activeRuleId = activeRuleId === value ? '' : value;
-    if (activeRuleId) view = 'all';
-  } else if (kind === 'todo') {
-    if (value === 'untagged') $('#untaggedOnly').checked = !$('#untaggedOnly').checked;
-    else $('#readFilter').value = $('#readFilter').value === 'later' ? 'all' : 'later';
-  } else {
-    const select = $(kind === 'author' ? '#authorFilter' : '#accountFilter');
-    select.value = select.value === value ? 'all' : value;
+  const wasOn = item.classList.contains('active');
+  // 레일의 숫자는 전체 기준이다. 항목을 고르면 다른 레일 선택을 풀어, 숫자와 결과가 어긋나 0건이 되지 않게 한다.
+  activeRuleId = '';
+  $('#authorFilter').value = 'all';
+  $('#accountFilter').value = 'all';
+  $('#untaggedOnly').checked = false;
+  if ($('#readFilter').value === 'later') $('#readFilter').value = 'all';
+  view = 'all';
+  if (!wasOn) {
+    if (kind === 'rule') activeRuleId = value;
+    else if (kind === 'todo' && value === 'untagged') $('#untaggedOnly').checked = true;
+    else if (kind === 'todo') $('#readFilter').value = 'later';
+    else $(kind === 'author' ? '#authorFilter' : '#accountFilter').value = value;
   }
   render();
 });
@@ -1586,4 +1591,8 @@ if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 const wantsScan = applyStartupParams();
 Promise.all([refresh(), refreshSavedViews()])
   .then(() => { if (wantsScan && ['all','bookmark','like'].includes(view)) openScanDialog(); })
-  .catch(error => notice(`打开收藏库失败：${error.message}`, true));
+  .catch(error => {
+    $('#cards').innerHTML = '';
+    $('#resultCount').textContent = '读取失败';
+    notice(`打开收藏库失败：${error.message}`, true);
+  });

@@ -68,9 +68,9 @@
         </div>
       </div>
       <div class="hero-stats" aria-label="收藏库概况">
-        <div><b id="statPosts">0</b><span>收藏总数</span></div>
-        <div><b id="statAuthors">0</b><span>作者</span></div>
-        <div><b id="statTags">0</b><span>标签</span></div>
+        <div><b id="statPosts">–</b><span>收藏总数</span></div>
+        <div><b id="statAuthors">–</b><span>作者</span></div>
+        <div><b id="statTags">–</b><span>标签</span></div>
       </div>
     </header>
 
@@ -178,7 +178,7 @@
       <div class="section-head">
         <div class="result-summary">
           <label><input id="selectVisible" type="checkbox"> 全选</label>
-          <span id="resultCount">0 条帖子</span>
+          <span id="resultCount">正在读取…</span>
         </div>
         <div class="io-actions">
           <button class="ghost" id="ioMenuButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="ioMenu">备份与导出 ▾</button>
@@ -199,7 +199,7 @@
 
       <div id="notice" class="notice" role="status" hidden></div>
 
-      <div id="cards" class="cards"></div>
+      <div id="cards" class="cards"><p class="loading"><span class="spinner" aria-hidden="true"></span>正在读取收藏库…</p></div>
 
       <div id="selectionBar" class="selection-bar" hidden>
         <span id="selectionCount">已选 0 项</span>
