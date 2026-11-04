@@ -117,8 +117,11 @@ function xTimeline(data, collection) {
   for (const entry of entries) {
     const content = entry?.content || {};
     if (content.cursorType === 'Bottom' && typeof content.value === 'string') cursor = content.value;
+    // 광고 글은 사용자가 북마크하거나 좋아요한 글이 아니다.
+    if (/^promoted/i.test(String(entry?.entryId || '')) || content.itemContent?.promotedMetadata) continue;
     const items = [content.itemContent, content.item?.itemContent, ...(content.items || []).map(item => item?.item?.itemContent || item?.itemContent)];
     for (const item of items) {
+      if (item?.promotedMetadata) continue;
       const post = xPost(item?.tweet_results?.result);
       if (post) found.set(post.id, post);
     }
@@ -128,7 +131,7 @@ function xTimeline(data, collection) {
 
 async function xReadPage(collection, session, cursor = null) {
   const variables = collection === 'bookmark'
-    ? { count:20, ...(cursor ? { cursor } : {}), includePromotedContent:true }
+    ? { count:20, ...(cursor ? { cursor } : {}), includePromotedContent:false }
     : { userId:session.userId, count:20, ...(cursor ? { cursor } : {}), includePromotedContent:false, withClientEventToken:false, withBirdwatchNotes:false, withVoice:true };
   return xTimeline(await xRequest(collection, variables, session), collection);
 }

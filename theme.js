@@ -4,12 +4,9 @@ var XTheme = (function () {
   var MODES = ['system', 'light', 'dark'];
   var media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
-  function read() {
-    try {
-      var saved = localStorage.getItem(KEY);
-      return MODES.indexOf(saved) >= 0 ? saved : 'system';
-    } catch (error) { return 'system'; }
-  }
+  /* 화면 테마는 항상 시스템 설정을 따른다. 예전에 고른 값이 남아 있으면 지운다. */
+  try { localStorage.removeItem(KEY); } catch (error) { /* 저장소를 못 써도 시스템 설정을 따른다 */ }
+  function read() { return 'system'; }
 
   function resolve(mode) {
     if (mode === 'light' || mode === 'dark') return mode;

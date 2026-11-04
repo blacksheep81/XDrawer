@@ -211,7 +211,7 @@ function currentViewSettings() {
   return {
     view, search:$('#search').value, media:$('#media').value, sort:$('#sort').value,
     account:$('#accountFilter').value, author:$('#authorFilter').value,
-    tags:[...activeTags], reading:$('#readFilter').value, link:$('#linkFilter').value,
+    tags:[...activeTags], reading:$('#readFilter').value,
     from:$('#fromDate').value, to:$('#toDate').value, preset:$('#datePreset').value,
     layout:$('#layout').value, collapse:$('#collapseDuplicates').checked, untagged:$('#untaggedOnly').checked, unsorted:unsortedOnly
   };
@@ -234,7 +234,7 @@ function applyViewSettings(settings) {
   render();
   const pairs = {
     search:settings.search, media:settings.media, sort:settings.sort, accountFilter:settings.account,
-    authorFilter:settings.author, readFilter:settings.reading, linkFilter:settings.link,
+    authorFilter:settings.author, readFilter:settings.reading,
     fromDate:settings.from, toDate:settings.to, datePreset:settings.preset, layout:settings.layout
   };
   for (const [id, value] of Object.entries(pairs)) {
@@ -278,7 +278,6 @@ function filteredPosts(parsed) {
   const account = $('#accountFilter').value;
   const author = $('#authorFilter').value;
   const reading = $('#readFilter').value;
-  const linkFilter = $('#linkFilter').value;
   const from = $('#fromDate').value, to = $('#toDate').value;
   const untaggedOnly = $('#untaggedOnly').checked;
   const rule = activeRule();
@@ -291,8 +290,6 @@ function filteredPosts(parsed) {
     if (author !== 'all' && item.username !== author) return false;
     if (media !== 'all' && item.media !== media) return false;
     if (reading !== 'all' && (item.readingState || 'none') !== reading) return false;
-    const status = item.linkStatus || 'unchecked';
-    if (linkFilter !== 'all' && !(linkFilter === 'attention' ? ['unavailable','unknown'].includes(status) : linkFilter === status)) return false;
     if (untaggedOnly && (item.tags || []).length) return false;
     for (const tag of activeTags) if (!(item.tags || []).includes(tag)) return false;
     if (from || to) {
@@ -322,7 +319,7 @@ function sortPosts(items) {
 
 function activeFilterCount() {
   let count = 0;
-  for (const id of ['#media','#accountFilter','#authorFilter','#readFilter','#linkFilter']) if ($(id).value !== 'all') count++;
+  for (const id of ['#media','#accountFilter','#authorFilter','#readFilter']) if ($(id).value !== 'all') count++;
   if ($('#fromDate').value || $('#toDate').value) count++;
   if ($('#untaggedOnly').checked) count++;
   if (unsortedOnly) count++;
@@ -367,8 +364,6 @@ function cardHTML(group, terms) {
     item.viewCount == null ? null : `${item.viewCount.toLocaleString('zh-CN')} 浏览`
   ].filter(Boolean);
   const reading = item.readingState || 'none';
-  const status = item.linkStatus || 'unchecked';
-  const availability = { available:'原帖已确认', unavailable:'原帖无法访问', unknown:'无法确认' }[status] || '原帖未检查';
   const posted = item.date && !Number.isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleDateString('zh-CN') : '无日期';
   const mediaLabel = { image:'图片', video:'视频' }[item.media] || '文本';
   const tagRow = (item.tags || []).map(tag => {
@@ -391,7 +386,6 @@ ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
 <div class="card-actions">
 <button class="reading-button${reading === 'later' ? ' active' : ''}" data-state="later" data-keys="${keyData}" aria-pressed="${reading === 'later'}">稍后读</button>
 <button class="reading-button${reading === 'read' ? ' active' : ''}" data-state="read" data-keys="${keyData}" aria-pressed="${reading === 'read'}">已读</button>
-<button class="check-link" data-key="${escapeHTML(item.key)}" data-status="${escapeHTML(status)}" title="在新的 X 标签页中检查原帖能否访问">${availability} ↻</button>
 </div>
 <div class="card-foot">
 <span class="card-meta">${[...meta, posted, mediaLabel].map(part => `<span>${escapeHTML(part)}</span>`).join('')}</span>
@@ -828,7 +822,7 @@ document.querySelectorAll('.nav').forEach(button => button.addEventListener('cli
 let renderTimer = 0;
 function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 150); }
 
-const filterControls = ['#search','#media','#sort','#accountFilter','#authorFilter','#readFilter','#linkFilter','#fromDate','#toDate','#layout','#collapseDuplicates','#untaggedOnly'];
+const filterControls = ['#search','#media','#sort','#accountFilter','#authorFilter','#readFilter','#fromDate','#toDate','#layout','#collapseDuplicates','#untaggedOnly'];
 for (const id of filterControls) {
   const control = $(id);
   if (!control) { console.warn(`未找到筛选控件 ${id}。`); continue; }
@@ -858,7 +852,7 @@ $('#advancedToggle').addEventListener('click', () => {
 
 $('#resetFilters').addEventListener('click', () => {
   $('#search').value = '';
-  for (const id of ['#media','#accountFilter','#authorFilter','#readFilter','#linkFilter']) $(id).value = 'all';
+  for (const id of ['#media','#accountFilter','#authorFilter','#readFilter']) $(id).value = 'all';
   $('#fromDate').value = $('#toDate').value = '';
   $('#datePreset').value = 'all';
   $('#untaggedOnly').checked = false;
@@ -1197,34 +1191,6 @@ $('#tagManagerList').addEventListener('click', async event => {
   } catch (error) { notice(`删除标签失败：${error.message}`, true); }
 });
 
-/* ── 원문 확인 ───────────────────────────────── */
-async function checkOriginalPost(key, button) {
-  const post = posts.find(item => item.key === key);
-  if (!post) return;
-  button.disabled = true;
-  button.textContent = '正在检查原帖…';
-  let tab;
-  let status = 'unknown';
-  try {
-    tab = await chrome.tabs.create({ url:post.url, active:false });
-    await waitForTabReady(tab.id);
-    for (let attempt = 0; attempt < 5; attempt++) {
-      let result;
-      try { result = await chrome.tabs.sendMessage(tab.id, { type:'CHECK_POST', id:post.id }); }
-      catch { /* 콘텐츠 스크립트가 아직 로드 중일 수 있다 */ }
-      if (['available','unavailable'].includes(result?.status)) { status = result.status; break; }
-      await new Promise(resolve => setTimeout(resolve, 800));
-    }
-    await updatePostFields(key, { linkStatus:status, checkedAt:new Date().toISOString() });
-    await refresh();
-    notice(status === 'available' ? '原帖目前可以查看。' : status === 'unavailable' ? 'X 页面显示无法访问原帖。无法确定具体原因（删除、设为私密或屏蔽等）。' : '无法判断原帖状态。请检查登录状态或页面加载情况后重试。', status !== 'available');
-  } catch (error) {
-    button.disabled = false;
-    button.textContent = '无法确认 ↻';
-    notice(`检查原帖时出错：${error.message}`, true);
-  } finally { if (tab?.id) await chrome.tabs.remove(tab.id).catch(() => {}); }
-}
-
 $('#cards').addEventListener('click', async event => {
   const expandButton = event.target.closest('.expand-text');
   if (expandButton) {
@@ -1254,8 +1220,6 @@ $('#cards').addEventListener('click', async event => {
     await refresh();
     return;
   }
-  const checkButton = event.target.closest('.check-link');
-  if (checkButton) { await checkOriginalPost(checkButton.dataset.key, checkButton); return; }
   const tagButton = event.target.closest('.tag-edit');
   if (tagButton) {
     editingTagKey = tagButton.dataset.key;
@@ -1483,7 +1447,7 @@ const CSV_COLUMNS = [
   ['键','key'], ['收藏类型','collectionLabel'], ['保存账号','account'], ['作者','author'], ['用户名','username'],
   ['帖子内容','text'], ['备注','note'], ['标签','tagList'], ['发布日期','date'], ['保存日期','savedAt'],
   ['喜欢数','likeCount'], ['浏览量','viewCount'], ['媒体','mediaLabel'], ['阅读状态','readingLabel'],
-  ['原帖状态','linkLabel'], ['地址','url']
+  ['地址','url']
 ];
 function csvCell(value) {
   let text = value == null ? '' : String(value);
@@ -1496,15 +1460,13 @@ $('#exportCsvButton').addEventListener('click', () => {
     const parsed = parseQuery($('#search').value.trim());
     const rows = sortPosts(filteredPosts(parsed));
     const readingLabels = { later:'稍后阅读', read:'已读' };
-    const linkLabels = { available:'可以查看', unavailable:'无法访问', unknown:'无法确认' };
     const body = rows.map(item => {
       const flat = {
         ...item,
         collectionLabel:kindLabels[item.collection] || item.collection,
         tagList:(item.tags || []).join(' '),
         mediaLabel:{ image:'图片', video:'视频' }[item.media] || '文本',
-        readingLabel:readingLabels[item.readingState] || '未分类',
-        linkLabel:linkLabels[item.linkStatus] || '未检查'
+        readingLabel:readingLabels[item.readingState] || '未分类'
       };
       return CSV_COLUMNS.map(([, field]) => csvCell(flat[field])).join(',');
     });
@@ -1650,7 +1612,6 @@ onDBChange(() => {
   }, 300);
 });
 
-if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 const wantsScan = applyStartupParams();
 Promise.all([refresh(), refreshSavedViews()])
   .then(() => { if (wantsScan && ['all','bookmark','like'].includes(view)) openScanDialog(); })
