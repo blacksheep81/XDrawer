@@ -53,7 +53,8 @@
         <button type="button" data-theme-set="light" title="浅色界面">浅色</button>
         <button type="button" data-theme-set="dark" title="深色界面">深色</button>
       </div>
-      <p class="rail-note"><span class="status-dot"></span> 仅保存在此设备</p>
+      <button id="syncOpen" class="sync-open" type="button">☁ 同步</button>
+      <p class="rail-note"><span class="status-dot"></span> <span id="railNote">仅保存在此设备</span></p>
     </div>
   </aside>
 
@@ -247,6 +248,21 @@
   </form>
 </dialog>
 
+<dialog id="syncDialog">
+  <h2>同步到 Google Drive</h2>
+  <p>收藏库会保存到你自己 Drive 的应用专属隐藏目录，只有 X 抽屉能读取，不经过其他服务器。登录 X 的凭据不会上传。</p>
+  <p id="syncStatus" class="sync-status" role="status"></p>
+  <p id="syncSetup" class="fine sync-setup" hidden></p>
+  <div class="dialog-actions sync-actions">
+    <button id="syncDisconnect" class="ghost" type="button" hidden>断开连接</button>
+    <button id="syncDeleteCloud" class="ghost danger" type="button" hidden>删除云端副本并断开</button>
+    <span class="sync-spacer"></span>
+    <button id="syncClose" class="ghost" type="button">关闭</button>
+    <button id="syncConnect" class="primary" type="button" hidden>连接 Google Drive</button>
+    <button id="syncRun" class="primary" type="button" hidden>立即同步</button>
+  </div>
+</dialog>
+
 <dialog id="tagDialog">
   <form method="dialog">
     <h2>整理帖子</h2>
@@ -350,6 +366,7 @@
 </dialog>
 
 <script src="db.js"></script>
+<script src="records.js"></script>
 <script src="xsync.js"></script>
 <script src="library.js"></script>
 <script src="people.js"></script>

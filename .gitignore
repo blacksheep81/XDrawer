@@ -1,3 +1,5 @@
 ko-original-backup.zip
 .claude/
 outputs/
+*.pem
+__pycache__/

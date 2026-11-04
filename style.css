@@ -88,6 +88,25 @@
 .rail-empty { margin: 0; padding: 2px 8px; font-size: 12px; line-height: 1.5; color: var(--rail-muted); }
 .rail-empty button { padding: 0; border: 0; background: none; color: var(--rail-ink); text-decoration: underline; font: inherit; cursor: pointer; }
 
+.sync-open {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--rail-line);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--rail-ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.sync-open:hover { background: var(--rail-2); }
+.sync-open.attention { border-color: #e0b04c; color: #f0c766; }
+#syncDialog { max-width: 520px; }
+.sync-status { margin-top: 14px !important; color: var(--ink) !important; white-space: pre-line; }
+.sync-status.error { color: var(--bad) !important; }
+.sync-setup { margin-top: 10px !important; overflow-wrap: anywhere; }
+.sync-actions { flex-wrap: wrap; }
+.sync-spacer { flex: 1; }
 .rail-foot { margin-top: auto; display: grid; gap: 12px; }
 .rail-foot .theme-switch { width: 100%; }
 .rail-foot .theme-switch button { flex: 1; }

@@ -24,7 +24,6 @@ const kindLabels = { bookmark:'书签', like:'喜欢', saved:'手动保存' };
 const kindMarks = kindLabels;
 
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-const safeColor = value => (/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value) : '');
 
 const collectionForURL = url => {
   try { const parsed = new URL(url); if (!['x.com','twitter.com'].includes(parsed.hostname)) return null; if (parsed.pathname === '/i/bookmarks') return 'bookmark'; if (/^\/[^/]+\/likes\/?$/.test(parsed.pathname)) return 'like'; } catch {}
@@ -45,22 +44,6 @@ async function waitForTabReady(id) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error('X 页面未能打开。请检查登录状态和网络。');
-}
-
-function normalizePost(item) {
-  if (!item || typeof item !== 'object' || !['bookmark','like','saved'].includes(item.collection) || typeof item.id !== 'string' || !/^\d+$/.test(item.id) || typeof item.url !== 'string' || !/^https:\/\/x\.com\/[^/]+\/status\/\d+$/.test(item.url)) throw new Error('备份中有无效的帖子。');
-  if (item.url.split('/status/')[1] !== item.id) throw new Error('备份中有帖子地址与 ID 不一致的条目。');
-  const account = typeof item.account === 'string' && /^[A-Za-z0-9_]{1,25}$/.test(item.account) ? item.account.toLowerCase() : 'legacy';
-  if (![`${item.collection}:${item.id}`, `${account}:${item.collection}:${item.id}`].includes(item.key)) throw new Error('备份中有无效的帖子。');
-  const string = key => typeof item[key] === 'string' ? item[key].slice(0,100000) : '';
-  const safeList = value => Array.isArray(value) ? value.filter(x => typeof x === 'string' && x.length < 3000).slice(0,30) : [];
-  const images = safeList(item.imageUrls).filter(url => { try { const u = new URL(url); return u.protocol === 'https:' && ['pbs.twimg.com','ton.twimg.com'].includes(u.hostname); } catch { return false; } });
-  const avatarUrl = string('avatarUrl').slice(0,3000);
-  const safeAvatar = (() => { try { const u = new URL(avatarUrl); return u.protocol === 'https:' && u.hostname === 'pbs.twimg.com' ? u.href : ''; } catch { return ''; } })();
-  const links = safeList(item.links).filter(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } });
-  const tags = Array.isArray(item.tags) ? [...new Set(item.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0,40)).filter(Boolean))].slice(0,20) : [];
-  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', linkStatus:['available','unavailable','unknown'].includes(item.linkStatus) ? item.linkStatus : '', checkedAt:string('checkedAt').slice(0,30), ruleApplied:Array.isArray(item.ruleApplied) ? item.ruleApplied.filter(x => typeof x === 'string' && x.length <= 130).slice(-200) : [] };
 }
 
 function notice(message, error = false, action = null) {
@@ -851,7 +834,7 @@ $('#applyBulk').addEventListener('click', async () => {
 $('#deleteSelected').addEventListener('click', async () => {
   const keys = [...selectedKeys];
   if (!keys.length) return;
-  const ok = await confirmAction('删除所选帖子', `将从此设备的收藏库中移除 ${keys.length} 个保存项。X 账号中的书签和喜欢不受影响。此操作无法撤销。`, `删除 ${keys.length} 项`);
+  const ok = await confirmAction('删除所选帖子', `将从收藏库中移除 ${keys.length} 个保存项，已开启同步的其他设备也会一起移除。X 账号中的书签和喜欢不受影响。此操作无法撤销。`, `删除 ${keys.length} 项`);
   if (!ok) return;
   await deletePosts(keys);
   selectedKeys.clear();
@@ -1062,7 +1045,7 @@ $('#cards').addEventListener('click', async event => {
   const deleteButton = event.target.closest('.delete');
   if (!deleteButton) return;
   const target = posts.find(item => item.key === deleteButton.dataset.key);
-  const ok = await confirmAction('删除帖子', `将从此设备的收藏库中移除此帖子。X 账号中的书签和喜欢不受影响。\n\n${(target?.text || target?.url || '').replace(/\s+/g, ' ').trim().slice(0,90)}`, '删除');
+  const ok = await confirmAction('删除帖子', `将从收藏库中移除此帖子，已开启同步的其他设备也会一起移除。X 账号中的书签和喜欢不受影响。\n\n${(target?.text || target?.url || '').replace(/\s+/g, ' ').trim().slice(0,90)}`, '删除');
   if (!ok) return;
   await deletePost(deleteButton.dataset.key);
   await refresh();
@@ -1317,32 +1300,15 @@ $('#importFile').addEventListener('change', async event => {
 
     const people = backup.version >= 3 ? backup.people : [];
     if (!Array.isArray(people) || people.length > 50000) throw new Error('人物记录的格式或数量无效。');
-    const validPeople = people.map(person => {
-      const handle = String(person?.handle || '').toLowerCase();
-      const match = String(person?.match || '').toLowerCase();
-      if (!/^[a-z0-9_]{1,15}$/.test(handle) || (match && !/^[a-z0-9_]{1,15}$/.test(match))) throw new Error('人物记录中有无效的账号。');
-      return { handle, match, label:String(person.label || '').slice(0,80), note:String(person.note || '').slice(0,500), privateAccount:!!person.privateAccount, updatedAt:String(person.updatedAt || '') };
-    });
+    const validPeople = people.map(normalizePerson);
 
     const viewItems = backup.version >= 5 ? backup.savedViews : [];
     if (!Array.isArray(viewItems) || viewItems.length > 100) throw new Error('已保存视图的格式或数量无效。');
-    const validViews = viewItems.map(entry => {
-      if (typeof entry?.id !== 'string' || !/^[a-z0-9-]{1,80}$/.test(entry.id) || typeof entry.name !== 'string' || !entry.name.trim() || entry.name.length > 50 || !entry.settings || typeof entry.settings !== 'object') throw new Error('已保存视图中有无效的条目。');
-      const settings = entry.settings;
-      const text = key => typeof settings[key] === 'string' ? settings[key].slice(0,500) : '';
-      const tags = Array.isArray(settings.tags)
-        ? settings.tags.filter(tag => typeof tag === 'string').map(tag => tag.slice(0,40)).slice(0,20)
-        : (typeof settings.tag === 'string' && settings.tag && settings.tag !== 'all' ? [settings.tag.slice(0,40)] : []);
-      return { id:entry.id, name:entry.name.trim(), settings:{ view:text('view'), search:text('search'), media:text('media'), sort:text('sort'), account:text('account'), author:text('author'), tags, reading:text('reading'), link:text('link'), from:text('from'), to:text('to'), preset:text('preset'), layout:text('layout'), collapse:!!settings.collapse, untagged:!!settings.untagged } };
-    });
+    const validViews = viewItems.map(normalizeView);
 
     const tagItems = backup.version >= 6 ? backup.tags : [];
     if (!Array.isArray(tagItems) || tagItems.length > 5000) throw new Error('标签列表的格式或数量无效。');
-    const validTags = tagItems.map(entry => {
-      const name = typeof entry?.name === 'string' ? entry.name.trim().slice(0,40) : '';
-      if (!name) throw new Error('标签列表中有无效的条目。');
-      return { name, color:safeColor(entry.color), createdAt:typeof entry.createdAt === 'string' ? entry.createdAt.slice(0,30) : '' };
-    });
+    const validTags = tagItems.map(normalizeTag);
 
     const ruleItems = backup.version >= 7 ? backup.smartRules : [];
     if (!Array.isArray(ruleItems) || ruleItems.length > RULE_LIMIT) throw new Error('智能分类的格式或数量无效。');
@@ -1359,7 +1325,7 @@ $('#importFile').addEventListener('change', async event => {
     const existingViews = new Set((await getAll('savedViews')).map(item => item.id));
     await withTransaction('savedViews', 'readwrite', tx => {
       const store = tx.objectStore('savedViews');
-      for (const entry of validViews) if (!existingViews.has(entry.id)) { store.put(entry); existingViews.add(entry.id); }
+      for (const entry of validViews) if (!existingViews.has(entry.id)) { store.put({ ...entry, updatedAt:new Date().toISOString() }); existingViews.add(entry.id); }
     });
     await withTransaction('tags', 'readwrite', tx => {
       const store = tx.objectStore('tags');
@@ -1368,8 +1334,8 @@ $('#importFile').addEventListener('change', async event => {
         request.onsuccess = () => {
           const existing = request.result;
           // 글을 가져오면서 색 없이 먼저 만들어진 태그에도 백업의 색을 채운다. 사용자가 정한 색은 유지한다.
-          if (!existing) store.put(entry);
-          else if (!existing.color && entry.color) store.put({ ...existing, color:entry.color, createdAt:existing.createdAt || entry.createdAt });
+          if (!existing) store.put({ ...entry, updatedAt:new Date().toISOString() });
+          else if (!existing.color && entry.color) store.put({ ...existing, color:entry.color, createdAt:existing.createdAt || entry.createdAt, updatedAt:new Date().toISOString() });
         };
       }
     });
@@ -1378,7 +1344,7 @@ $('#importFile').addEventListener('change', async event => {
       const store = tx.objectStore('smartRules');
       for (const rule of validRules) {
         const request = store.get(rule.id);
-        request.onsuccess = () => { if (!request.result) store.put(rule); };
+        request.onsuccess = () => { if (!request.result) store.put({ ...rule, updatedAt:new Date().toISOString() }); };
       }
     });
 
@@ -1422,6 +1388,69 @@ onDBChange(() => {
     Promise.all([refresh(), refreshSavedViews()]).catch(error => notice(`刷新收藏库失败：${error.message}`, true));
   }, 300);
 });
+
+/* ── 동기화 ──────────────────────────────────── */
+let syncInfo = { configured:false, state:{} }, syncBusy = false;
+
+function renderSync() {
+  const { configured, state = {} } = syncInfo;
+  const connected = !!state.connected;
+  const when = state.lastAt ? new Date(state.lastAt).toLocaleString('zh-CN') : '';
+  $('#syncOpen').textContent = !connected ? '☁ 同步：未连接' : state.lastError ? '☁ 同步：需要处理' : '☁ 同步：已开启';
+  $('#syncOpen').classList.toggle('attention', connected && !!state.lastError);
+  $('#railNote').textContent = connected ? '已同步到你的 Google Drive' : '仅保存在此设备';
+  const lines = connected ? [`已连接：${state.email || 'Google 账号'}`, when ? `上次同步：${when}` : '尚未完成同步'] : [configured ? '尚未连接。连接后，本机和云端的数据会自动合并，不会互相覆盖。' : '同步功能尚未配置，当前版本的数据仍只保存在此设备。'];
+  if (syncBusy) lines.push('正在处理…');
+  if (state.lastError) lines.push(state.lastError);
+  $('#syncStatus').textContent = lines.join('\n');
+  $('#syncStatus').classList.toggle('error', !!state.lastError);
+  $('#syncSetup').hidden = configured;
+  $('#syncSetup').textContent = configured ? '' : '配置方法见 README 的“Google Drive 同步”一节。';
+  $('#syncConnect').hidden = !configured || (connected && !state.needsLogin);
+  $('#syncConnect').textContent = connected ? '重新连接' : '连接 Google Drive';
+  $('#syncRun').hidden = !connected || !!state.needsLogin;
+  $('#syncDisconnect').hidden = $('#syncDeleteCloud').hidden = !connected;
+  for (const id of ['#syncConnect','#syncRun','#syncDisconnect','#syncDeleteCloud']) $(id).disabled = syncBusy;
+}
+
+async function syncRequest(message) {
+  syncBusy = true;
+  renderSync();
+  try {
+    const answer = await chrome.runtime.sendMessage(message);
+    if (answer) syncInfo = { configured:answer.configured, state:answer.ok ? answer.state : { ...syncInfo.state, lastError:answer.error } };
+  } catch (error) {
+    syncInfo = { ...syncInfo, state:{ ...syncInfo.state, lastError:error.message } };
+  } finally {
+    syncBusy = false;
+    renderSync();
+  }
+}
+
+$('#syncOpen').addEventListener('click', () => { renderSync(); $('#syncDialog').showModal(); });
+$('#syncClose').addEventListener('click', () => $('#syncDialog').close());
+$('#syncConnect').addEventListener('click', () => syncRequest({ type:'SYNC_CONNECT' }));
+$('#syncRun').addEventListener('click', () => syncRequest({ type:'SYNC_NOW' }));
+$('#syncDisconnect').addEventListener('click', () => syncRequest({ type:'SYNC_DISCONNECT' }));
+$('#syncDeleteCloud').addEventListener('click', async () => {
+  $('#syncDialog').close();
+  const ok = await confirmAction('删除云端副本', '将删除 Google Drive 中的同步文件并断开连接。本机数据不受影响。其他仍在同步的设备可能会重新上传。此操作无法撤销。', '删除');
+  $('#syncDialog').showModal();
+  if (ok) await syncRequest({ type:'SYNC_DISCONNECT', deleteCloud:true });
+});
+
+/* 백그라운드 동기화의 상태를 화면에 반영한다. 받아온 데이터는 onDBChange가 새로 읽는다. */
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== 'local' || !changes.syncState) return;
+  syncInfo = { ...syncInfo, state:changes.syncState.newValue || {} };
+  renderSync();
+});
+
+async function startSync() {
+  await syncRequest({ type:'SYNC_STATUS' });
+  if (syncInfo.state?.connected) chrome.runtime.sendMessage({ type:'SYNC_NOW' }).catch(() => {});
+}
+startSync();
 
 if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 const wantsScan = applyStartupParams();
