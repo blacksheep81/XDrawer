@@ -509,15 +509,24 @@ function describeRule(rule) {
   if (rule.keywords.length) parts.push(`${rule.match === 'all' ? '包含全部' : '包含任一'}：${rule.keywords.join('、')}`);
   if (rule.authors.length) parts.push(`作者：${rule.authors.map(handle => '@' + handle).join('、')}`);
   if (rule.exclude.length) parts.push(`排除：${rule.exclude.join('、')}`);
+  const filters = ruleFilterText(rule);
+  if (filters) parts.push(`条件：${filters}`);
   if (rule.tag) parts.push(`自动添加标签「${rule.tag}」`);
   return parts.join(' · ');
 }
-/* 아직 이 규칙이 적용되지 않은(표시가 없는) 맞는 글 */
-function pendingRulePosts(rule) {
+/* has:/-has:/-from: 조건을 검색어 형태로 보여 준다. 대화상자의 "附加条件" 칸과 같은 형식이다. */
+function ruleFilterText(rule) {
+  return [...(rule.has || []).map(flag => `has:${flag}`), ...(rule.notHas || []).map(flag => `-has:${flag}`), ...(rule.notAuthors || []).map(handle => `-from:${handle}`)].join(' ');
+}
+/* 아직 이 규칙이 적용되지 않은(표시가 없는) 맞는 글. 태그가 가득 차 붙일 수 없는 글은 따로 센다. */
+const ruleTagFull = (rule, item) => !(item.tags || []).includes(rule.tag) && (item.tags || []).length >= RULE_TAG_LIMIT;
+function unmarkedRulePosts(rule) {
   if (!rule?.tag) return [];
   const mark = ruleMark(rule);
   return rulePosts(rule).filter(item => !(item.ruleApplied || []).includes(mark));
 }
+function pendingRulePosts(rule) { return unmarkedRulePosts(rule).filter(item => !ruleTagFull(rule, item)); }
+function fullRulePosts(rule) { return unmarkedRulePosts(rule).filter(item => ruleTagFull(rule, item)); }
 function updateApplyRuleButton(rule) {
   const pending = rule ? pendingRulePosts(rule).length : 0;
   $('#applyRule').hidden = !pending;
@@ -598,19 +607,37 @@ function ruleFromForm() {
     match: document.querySelector('input[name="ruleMatch"]:checked')?.value,
     exclude: $('#ruleExclude').value,
     authors: $('#ruleAuthors').value,
+    ...parseRuleFilters($('#ruleFilters').value),
     tag: $('#ruleTag').value,
     createdAt: smartRules.find(rule => rule.id === editingRuleId)?.createdAt
   };
 }
+/* "附加条件" 칸을 읽는다. 규칙이 저장할 수 없는 조건이 있으면 오류로 알려 준다. */
+function parseRuleFilters(value) {
+  const parsed = parseQuery(value);
+  const unsupported = [
+    ...parsed.include, ...parsed.exclude.map(term => '-' + term), ...parsed.from.map(handle => 'from:' + handle),
+    ...parsed.tag.map(tag => 'tag:' + tag), ...parsed.notTag.map(tag => '-tag:' + tag),
+    ...parsed.is.map(state => 'is:' + state), ...parsed.notIs.map(state => '-is:' + state),
+    ...[...parsed.has, ...parsed.notHas].filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => 'has:' + flag)
+  ];
+  if (unsupported.length) throw new Error(`附加条件只支持 has:image / video / media / link、对应的 -has:，以及 -from:作者。无法使用：${unsupported.join(' ')}`);
+  return { has:parsed.has, notHas:parsed.notHas, notAuthors:parsed.notFrom };
+}
 function updateRulePreview() {
   let rule;
   try { rule = normalizeRule({ ...ruleFromForm(), name: $('#ruleName').value.trim() || '预览' }); }
-  catch { $('#rulePreview').innerHTML = '<span class="muted">填写关键词或作者后，这里会显示命中的帖子。</span>'; return; }
+  catch (error) {
+    $('#rulePreview').innerHTML = /附加条件/.test(error.message) ? `<span class="error-text">${escapeHTML(error.message)}</span>` : '<span class="muted">填写关键词、作者或 has: 条件后，这里会显示命中的帖子。</span>';
+    return;
+  }
   const matches = rulePosts(rule);
   const pending = rule.tag ? pendingRulePosts(rule).length : 0;
+  const full = rule.tag ? fullRulePosts(rule).length : 0;
   const sample = matches.slice(0, 4).map(item => `<li><b>${escapeHTML(item.author || item.username)}</b>：${escapeHTML((item.text || '').replace(/\s+/g, ' ').slice(0, 80))}</li>`).join('');
   $('#rulePreview').innerHTML = `命中 <strong>${matches.length.toLocaleString('zh-CN')}</strong> 条帖子`
     + (rule.tag ? `，其中 ${pending.toLocaleString('zh-CN')} 条保存后可以补上「${escapeHTML(rule.tag)}」标签` : '')
+    + (full ? `，${full.toLocaleString('zh-CN')} 条已有 ${RULE_TAG_LIMIT} 个标签，暂时加不上` : '')
     + (sample ? `<ul>${sample}</ul>` : '');
 }
 function openRuleDialog(rule = null, prefill = {}) {
@@ -621,6 +648,9 @@ function openRuleDialog(rule = null, prefill = {}) {
   $('#ruleKeywords').value = (source.keywords || []).join(', ');
   $('#ruleExclude').value = (source.exclude || []).join(', ');
   $('#ruleAuthors').value = (source.authors || []).map(handle => '@' + handle).join(', ');
+  $('#ruleFilters').value = ruleFilterText(source);
+  $('#ruleWarning').hidden = !source.warning;
+  $('#ruleWarning').textContent = source.warning || '';
   $('#ruleTag').value = source.tag || '';
   document.querySelector(`input[name="ruleMatch"][value="${source.match === 'all' ? 'all' : 'any'}"]`).checked = true;
   $('#deleteRuleButton').hidden = !rule;
@@ -632,12 +662,31 @@ $('#ruleForm').addEventListener('input', updateRulePreview);
 $('#cancelRule').addEventListener('click', () => $('#ruleDialog').close());
 $('#newRule').addEventListener('click', () => openRuleDialog());
 $('#editRule').addEventListener('click', () => { const rule = activeRule(); if (rule) openRuleDialog(rule); });
+/* 검색 조건을 규칙으로 옮긴다. 옮길 수 없는 조건(태그·읽음 상태 등)은 대화상자에서 분명히 알린다. */
+function ruleFromSearch(query, author = 'all') {
+  const parsed = parseQuery(query);
+  const validHandle = handle => /^[a-z0-9_]{1,15}$/.test(handle);
+  const authors = [...parsed.from, ...(author !== 'all' ? [author] : [])];
+  const has = parsed.has.filter(flag => RULE_HAS_FLAGS.includes(flag));
+  const notHas = parsed.notHas.filter(flag => RULE_HAS_FLAGS.includes(flag));
+  const dropped = [
+    ...authors.filter(handle => !validHandle(handle)).map(handle => 'from:' + handle),
+    ...parsed.notFrom.filter(handle => !validHandle(handle)).map(handle => '-from:' + handle),
+    ...parsed.tag.map(tag => 'tag:' + tag), ...parsed.notTag.map(tag => '-tag:' + tag),
+    ...parsed.is.map(state => 'is:' + state), ...parsed.notIs.map(state => '-is:' + state),
+    ...parsed.has.filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => 'has:' + flag),
+    ...parsed.notHas.filter(flag => !RULE_HAS_FLAGS.includes(flag)).map(flag => '-has:' + flag)
+  ];
+  return {
+    keywords:parsed.include, exclude:parsed.exclude, authors:authors.filter(validHandle), notAuthors:parsed.notFrom.filter(validHandle), has, notHas, match:'all',
+    warning: dropped.length ? `智能分类不支持这些搜索条件，已忽略：${dropped.join(' ')}。分类结果可能比当前搜索多。` : ''
+  };
+}
 $('#searchToRule').addEventListener('click', () => {
-  const parsed = parseQuery($('#search').value.trim());
   const author = $('#authorFilter').value;
-  const authors = [...parsed.from, ...(author !== 'all' ? [author] : [])].filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
-  const name = parsed.include[0] || (author !== 'all' ? $('#authorFilter').selectedOptions[0]?.textContent.split(' · ')[0] : '') || '';
-  openRuleDialog(null, { name, keywords:parsed.include, exclude:parsed.exclude, authors, match:'all' });
+  const prefill = ruleFromSearch($('#search').value.trim(), author);
+  const name = prefill.keywords[0] || (author !== 'all' ? $('#authorFilter').selectedOptions[0]?.textContent.split(' · ')[0] : '') || '';
+  openRuleDialog(null, { ...prefill, name });
 });
 $('#ruleForm').addEventListener('submit', async event => {
   event.preventDefault();
@@ -670,12 +719,20 @@ async function applyActiveRule() {
   const pending = pendingRulePosts(rule);
   if (!rule || !pending.length) return;
   try {
-    const { marked, added } = await applyRuleToPosts(rule, pending.map(item => item.key));
+    const { marked, added, full } = await applyRuleToPosts(rule, pending.map(item => item.key));
     await refresh();
-    notice(`已为 ${added.length.toLocaleString('zh-CN')} 条帖子添加「${rule.tag}」标签${marked.length > added.length ? `（${marked.length - added.length} 条原本已有）` : ''}。`, false, {
+    const extra = [
+      marked.length > added.length ? `${marked.length - added.length} 条原本已有` : '',
+      full.length ? `${full.length} 条已有 ${RULE_TAG_LIMIT} 个标签，未添加，腾出位置后可以再试` : ''
+    ].filter(Boolean).join('；');
+    notice(`已为 ${added.length.toLocaleString('zh-CN')} 条帖子添加「${rule.tag}」标签${extra ? `（${extra}）` : ''}。`, false, {
       label:'撤销',
       run: async () => {
-        try { await undoRuleApply(ruleMark(rule), rule.tag, marked, added); await refresh(); notice(`已撤销，移除了这次添加的 ${added.length} 个「${rule.tag}」标签。`); }
+        try {
+          const { removed, kept } = await undoRuleApply(ruleMark(rule), rule.tag, marked, added);
+          await refresh();
+          notice(`已撤销，移除了这次添加的 ${removed} 个「${rule.tag}」标签${kept ? `；${kept} 条帖子之后改过标签，已保留不动` : ''}。`);
+        }
         catch (error) { notice(`撤销失败：${error.message}`, true); }
       }
     });

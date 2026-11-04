@@ -806,3 +806,5 @@ dialog .rule-mode input[type="radio"] { width: auto; margin: 0; padding: 0; acce
 .dialog-actions .danger-text { margin-right: auto; color: var(--bad); }
 .notice .notice-action { margin-left: 10px; padding: 3px 10px; border: 1px solid currentColor; border-radius: var(--r-sm); background: none; color: inherit; font-size: 12px; cursor: pointer; }
 .rule-preview .error-text { color: var(--bad); }
+.rule-warning { margin: 10px 0 0; padding: 9px 12px; border-left: 3px solid var(--bad); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font-size: 12.5px; line-height: 1.6; }
+.rule-warning[hidden] { display: none; }
