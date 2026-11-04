@@ -10,15 +10,14 @@ let confirmResolve = null;
 
 const titles = { all:'全部收藏', bookmark:'书签', like:'喜欢', saved:'手动保存', people:'人物·小号' };
 const subtitles = {
-  all:'找回刷过的帖子，属于你自己的 X 存档。',
+  all:'搜索、筛选和整理你保存的全部帖子。',
   bookmark:'搜索并整理已保存的书签。',
   like:'重温喜欢的帖子，并通过链接分享。',
   saved:'这些是你在 X 帖子页面手动保存的帖子。',
   people:'记录已亲自确认账号的别名和线索。'
 };
-const eyebrows = { all:'LOCAL ARCHIVE', bookmark:'BOOKMARKS', like:'LIKES', saved:'QUICK SAVED', people:'PEOPLE NOTES' };
 const kindLabels = { bookmark:'书签', like:'喜欢', saved:'手动保存' };
-const kindMarks = { bookmark:'⌑ 书签', like:'♡ 喜欢', saved:'✦ 手动保存' };
+const kindMarks = kindLabels;
 
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const safeColor = value => (/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value) : '');
@@ -162,6 +161,7 @@ function updateSelection() {
   $('#selectVisible').indeterminate = selectedVisible > 0 && selectedVisible < visibleKeys.length;
   $('#selectionCount').textContent = `已选 ${selectedKeys.size} 项`;
   const none = selectedKeys.size === 0;
+  $('#selectionBar').hidden = none;
   $('#clearSelection').disabled = $('#shareSelected').disabled = $('#bulkEdit').disabled = $('#deleteSelected').disabled = none;
 }
 
@@ -215,7 +215,9 @@ function tagColor(name) { return safeColor(tagMeta.find(meta => meta.name === na
 function renderTagBar() {
   const counts = tagCounts();
   const names = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b, 'zh-CN'));
-  const shown = names.filter(name => activeTags.has(name) || counts.get(name) > 0).slice(0, 40);
+  const panelOpen = !$('#advancedPanel').hidden;
+  $('#tagSection').hidden = !panelOpen && !activeTags.size;
+  const shown = names.filter(name => activeTags.has(name) || (panelOpen && counts.get(name) > 0)).slice(0, 40);
   if (!shown.length) {
     $('#tagBar').innerHTML = '<span class="muted">还没有标签。在卡片的“整理”中添加第一个标签吧。</span>';
     return;
@@ -224,7 +226,7 @@ function renderTagBar() {
   $('#tagBar').innerHTML = shown.map(name => {
     const color = tagColor(name);
     return `<button type="button" class="tag-filter${activeTags.has(name) ? ' on' : ''}" data-tag="${escapeHTML(name)}" aria-pressed="${activeTags.has(name)}"><i${color ? ` style="background:${color}"` : ''}></i>${escapeHTML(name)} <em>${counts.get(name)}</em></button>`;
-  }).join('') + (extra > 0 ? `<span class="muted">另有 ${extra} 个 — 在搜索框输入 tag:名称</span>` : '');
+  }).join('') + (panelOpen && extra > 0 ? `<span class="muted">另有 ${extra} 个 — 在搜索框输入 tag:名称</span>` : '');
 }
 
 function filteredPosts(parsed) {
@@ -294,10 +296,10 @@ function cardHTML(group, terms) {
   const avatar = item.avatarUrl
     ? `<img class="avatar-image" src="${escapeHTML(item.avatarUrl)}" alt="" loading="lazy" data-initial="${escapeHTML(initial)}">`
     : escapeHTML(initial);
-  const engagement = [
-    item.likeCount == null ? null : `♥ ${item.likeCount.toLocaleString('zh-CN')}`,
-    item.viewCount == null ? null : `◉ ${item.viewCount.toLocaleString('zh-CN')}`
-  ].filter(Boolean).join(' · ');
+  const meta = [
+    item.likeCount == null ? null : `${item.likeCount.toLocaleString('zh-CN')} 喜欢`,
+    item.viewCount == null ? null : `${item.viewCount.toLocaleString('zh-CN')} 浏览`
+  ].filter(Boolean);
   const reading = item.readingState || 'none';
   const status = item.linkStatus || 'unchecked';
   const availability = { available:'原帖已确认', unavailable:'原帖无法访问', unknown:'无法确认' }[status] || '原帖未检查';
@@ -312,20 +314,20 @@ function cardHTML(group, terms) {
 <div class="card-top">
 <label class="select-post" title="选择要分享或批量整理的帖子"><input type="checkbox" class="post-select" data-keys="${keyData}" aria-label="选择 ${escapeHTML(item.author || item.username)} 的帖子"${allSelected ? ' checked' : ''}></label>
 <div class="avatar">${avatar}</div>
-<div class="identity"><strong>${escapeHTML(item.author || item.username)}</strong><span>@${escapeHTML(item.username)} · 保存账号 @${escapeHTML(item.accountName || item.account || 'legacy')}</span></div>
+<div class="identity"><strong>${escapeHTML(item.author || item.username)}</strong><span>@${escapeHTML(item.username)}<em>保存账号 @${escapeHTML(item.accountName || item.account || 'legacy')}</em></span></div>
 <span class="pill" data-kind="${escapeHTML(item.collection)}">${kindMarks[item.collection] || escapeHTML(item.collection)}</span>
 </div>${duplicateNote}
 <p class="post-text">${highlightText(item.text || '(未能获取正文)', terms)}</p>
-${item.note ? `<p class="post-note">备注 · ${highlightText(item.note, terms)}</p>` : ''}
+${item.note ? `<p class="post-note">备注：${highlightText(item.note, terms)}</p>` : ''}
 ${item.imageUrls?.[0] ? `<img class="preview" src="${escapeHTML(item.imageUrls[0])}" alt="帖子图片" loading="lazy">` : ''}
 ${tagRow ? `<div class="tag-row">${tagRow}</div>` : ''}
 <div class="card-actions">
-<button class="reading-button${reading === 'later' ? ' active' : ''}" data-state="later" data-keys="${keyData}" aria-pressed="${reading === 'later'}">◇ 稍后读</button>
-<button class="reading-button${reading === 'read' ? ' active' : ''}" data-state="read" data-keys="${keyData}" aria-pressed="${reading === 'read'}">✓ 已读</button>
+<button class="reading-button${reading === 'later' ? ' active' : ''}" data-state="later" data-keys="${keyData}" aria-pressed="${reading === 'later'}">稍后读</button>
+<button class="reading-button${reading === 'read' ? ' active' : ''}" data-state="read" data-keys="${keyData}" aria-pressed="${reading === 'read'}">已读</button>
 <button class="check-link" data-key="${escapeHTML(item.key)}" data-status="${escapeHTML(status)}" title="在新的 X 标签页中检查原帖能否访问">${availability} ↻</button>
 </div>
 <div class="card-foot">
-<span>${engagement ? `${escapeHTML(engagement)} · ` : ''}${escapeHTML(posted)} · ${mediaLabel}</span>
+<span class="card-meta">${[...meta, posted, mediaLabel].map(part => `<span>${escapeHTML(part)}</span>`).join('')}</span>
 <div><button class="tag-edit" data-key="${escapeHTML(item.key)}">整理</button><a href="${escapeHTML(item.url)}" target="_blank" rel="noopener noreferrer">原帖 ↗</a><button class="delete" data-key="${escapeHTML(item.key)}" title="从本地收藏库删除" aria-label="从收藏库删除此帖子">×</button></div>
 </div></article>`;
 }
@@ -337,7 +339,6 @@ function render() {
   $('#scanButton').hidden = !['all','bookmark','like'].includes(view);
   $('#title').textContent = titles[view];
   $('#subtitle').textContent = subtitles[view];
-  $('#eyebrow').textContent = eyebrows[view];
   $('#allCount').textContent = posts.length;
   $('#bookmarkCount').textContent = posts.filter(item => item.collection === 'bookmark').length;
   $('#likeCount').textContent = posts.filter(item => item.collection === 'like').length;
@@ -384,10 +385,11 @@ function render() {
   const filterCount = activeFilterCount();
   $('#resultCount').textContent = (groups.length === filtered.length
     ? `${filtered.length.toLocaleString('zh-CN')} 条帖子`
-    : `${filtered.length.toLocaleString('zh-CN')} 个保存项 · ${groups.length.toLocaleString('zh-CN')} 张卡片`)
-    + (filterCount ? ` · 已应用 ${filterCount} 个筛选` : '');
-  $('#resetFilters').disabled = filterCount === 0;
-  $('#advancedToggle').textContent = `高级筛选 ${$('#advancedPanel').hidden ? '▾' : '▴'}`;
+    : `${filtered.length.toLocaleString('zh-CN')} 个保存项，合并为 ${groups.length.toLocaleString('zh-CN')} 张卡片`)
+    + (filterCount ? `，已应用 ${filterCount} 个筛选` : '');
+  $('#resetFilters').disabled = $('#resetFilters').hidden = filterCount === 0;
+  const panelFilters = filterCount - ($('#search').value.trim() ? 1 : 0);
+  $('#advancedToggle').textContent = `筛选${panelFilters ? ` · ${panelFilters}` : ''} ${$('#advancedPanel').hidden ? '▾' : '▴'}`;
 
   const layout = $('#layout').value;
   $('#cards').classList.toggle('list-layout', layout === 'list');
@@ -411,7 +413,7 @@ function render() {
   });
 
   $('#history').innerHTML = [...history].reverse().slice(0,6).map(entry =>
-    `<div class="history-row"><span>${escapeHTML(kindMarks[entry.collection] || entry.collection)} · 确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
+    `<div class="history-row"><span>${escapeHTML(kindMarks[entry.collection] || entry.collection)}：确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
   ).join('') || '<p class="muted">还没有导入记录。</p>';
 }
 
@@ -590,7 +592,7 @@ function selectedUniquePosts() {
 }
 function renderShare() {
   const items = selectedUniquePosts();
-  $('#shareSummary').textContent = `${items.length} 条帖子${selectedKeys.size > items.length ? ` · ${selectedKeys.size - items.length} 个重复保存项只显示一次` : ''}`;
+  $('#shareSummary').textContent = `${items.length} 条帖子${selectedKeys.size > items.length ? `，${selectedKeys.size - items.length} 个重复保存项只显示一次` : ''}`;
   const format = $('#shareFormat').value;
   const summary = item => (item.text || '无正文').replace(/\s+/g, ' ').trim().slice(0,160);
   $('#shareLinks').value = format === 'details'
@@ -824,7 +826,7 @@ async function runWebScan() {
       }
       if (items.length) await savePosts(account, collection, items, mode);
       pages++;
-      $('#scanProgressText').textContent = `${accountName ? `@${accountName}` : `账号 ${session.userId}`} · ${pages} 页 · 确认 ${seen.size} 条 · 新帖 ${newCount} 条`;
+      $('#scanProgressText').textContent = `${accountName ? `@${accountName}` : `账号 ${session.userId}`}：${pages} 页，确认 ${seen.size} 条，新帖 ${newCount} 条`;
       if (result.warnings.length) throw new Error(result.warnings.join('; '));
       knownPages = fresh ? 0 : knownPages + 1;
       if (!result.cursor || cursors.has(result.cursor)) { reason = '已检查到最后一页。'; break; }
@@ -833,10 +835,10 @@ async function runWebScan() {
       cursor = result.cursor;
     }
     await refresh();
-    notice(`${accountName ? `@${accountName}` : `账号 ${session.userId}`} · 在 ${pages} 页中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : reason}`, !seen.size);
+    notice(`${accountName ? `@${accountName}` : `账号 ${session.userId}`}：在 ${pages} 页中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : reason}`, !seen.size);
   } catch (error) {
     await refresh();
-    notice(`网页同步已中断：${error.message}${pages ? ` · 已保存从 ${pages} 页读取的帖子。` : ''}`, true);
+    notice(`网页同步已中断：${error.message}${pages ? `。已保存从 ${pages} 页读取的帖子。` : ''}`, true);
   } finally {
     $('#scanButton').disabled = false;
     $('#scanProgress').hidden = true;
@@ -907,7 +909,7 @@ $('#scanDialog').addEventListener('close', async () => {
       roundsDone = round + 1;
       noNewRounds = freshThisRound ? 0 : noNewRounds + 1;
       bottomRounds = response.bottom ? bottomRounds + 1 : 0;
-      $('#scanProgressText').textContent = `第 ${roundsDone} 步 · 确认 ${seen.size} 条 · 新帖 ${newCount} 条`;
+      $('#scanProgressText').textContent = `第 ${roundsDone} 步，确认 ${seen.size} 条，新帖 ${newCount} 条`;
       if (pending.size >= 50 || round === maxRounds || noNewRounds >= 4 || bottomRounds >= 3) {
         if (pending.size) { await savePosts(account, collection, [...pending.values()], mode); pending.clear(); }
       }
@@ -917,7 +919,7 @@ $('#scanDialog').addEventListener('close', async () => {
     }
     if (pending.size) await savePosts(account, collection, [...pending.values()], mode);
     await refresh();
-    notice(seen.size ? `@${account} · 在 ${roundsDone} 步中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : stopReason}` : '没有导入任何帖子。请等 X 页面完全打开后重试。', !seen.size);
+    notice(seen.size ? `@${account}：在 ${roundsDone} 步中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : stopReason}` : '没有导入任何帖子。请等 X 页面完全打开后重试。', !seen.size);
   } catch (error) {
     if (pending.size && account && collection) {
       try { await savePosts(account, collection, [...pending.values()], mode || 'partial'); await refresh(); }

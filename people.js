@@ -11,9 +11,9 @@ async function renderPeople() {
   const saved = await getAll('people');
   const query = $('#personSearch').value.trim().toLowerCase();
   const people = saved.filter(person => !query || [person.handle, person.label, person.note, person.match].join(' ').toLowerCase().includes(query)).sort((a,b) => Number(!!b.label) - Number(!!a.label) || a.handle.localeCompare(b.handle));
-  $('#peopleList').innerHTML = people.length ? `<p class="muted">${people.length} 个账号${people.length > 100 ? ' · 仅显示前 100 个，请用搜索缩小范围' : ''}</p>` + people.slice(0,100).map(person => `
+  $('#peopleList').innerHTML = people.length ? `<p class="muted">${people.length} 个账号${people.length > 100 ? '，仅显示前 100 个，请用搜索缩小范围' : ''}</p>` + people.slice(0,100).map(person => `
     <article class="person-row">
-      <div><strong>${escapeHTML(person.label || `@${person.handle}`)}</strong><span>@${escapeHTML(person.handle)}${person.privateAccount ? ' · 私密账号' : ''}${person.match ? ` · 关联：@${escapeHTML(person.match)}` : ''}</span>${person.note ? `<p>${escapeHTML(person.note)}</p>` : ''}</div>
+      <div><strong>${escapeHTML(person.label || `@${person.handle}`)}</strong><span>@${escapeHTML(person.handle)}${person.privateAccount ? '，私密账号' : ''}${person.match ? `，关联 @${escapeHTML(person.match)}` : ''}</span>${person.note ? `<p>${escapeHTML(person.note)}</p>` : ''}</div>
       <button type="button" class="ghost edit-person" data-handle="${escapeHTML(person.handle)}">编辑</button>
     </article>`).join('') : '<p class="muted">还没有整理过账号。先手动添加已确认的账号吧。</p>';
 }
