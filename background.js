@@ -1,4 +1,4 @@
-importScripts('status-path.js','db.js','xsync.js');
+importScripts('status-path.js','db.js','records.js','xsync.js','sync.js');
 
 function safeVisiblePost(post) {
   const id = String(post?.id || '');
@@ -26,3 +26,27 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   })().catch(error => respond({ ok:false, error:error.message }));
   return true;
 });
+
+/* ── 동기화 ──────────────────────────────────── */
+const SYNC_MESSAGES = {
+  SYNC_STATUS: async () => readSyncState(),
+  SYNC_NOW: () => runSync(),
+  SYNC_CONNECT: () => connectSync(),
+  SYNC_DISCONNECT: message => disconnectSync(!!message.deleteCloud)
+};
+
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  const handler = SYNC_MESSAGES[message?.type];
+  // 동기화는 확장 페이지에서만 요청할 수 있다. X 페이지의 콘텐츠 스크립트는 제외한다.
+  if (!handler || !sender.url?.startsWith(chrome.runtime.getURL(''))) return;
+  (async () => {
+    const state = await handler(message);
+    respond({ ok:true, configured:syncConfigured(), state });
+  })().catch(error => respond({ ok:false, configured:syncConfigured(), error:error.message }));
+  return true;
+});
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name.startsWith('x-drawer-sync-')) runSync();
+});
+chrome.alarms.create('x-drawer-sync-periodic', { periodInMinutes:30 });

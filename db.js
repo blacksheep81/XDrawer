@@ -1,5 +1,5 @@
 const DB_NAME = 'x-drawer';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const HISTORY_LIMIT = 200;
 
 function openDB() {
@@ -48,6 +48,7 @@ function openDB() {
         };
       }
       if (event.oldVersion < 6) db.createObjectStore('smartRules', { keyPath:'id' });
+      if (event.oldVersion < 7) db.createObjectStore('tombstones', { keyPath:'id' });
     };
     request.onblocked = () => reject(new Error('收藏库正被其他标签页占用，无法更新。请关闭所有 X 抽屉标签页后重新打开。'));
     request.onsuccess = () => resolve(request.result);
@@ -60,6 +61,18 @@ const dbChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(
 function announceDBChange() { try { dbChannel?.postMessage({ type:'changed', at:Date.now() }); } catch {} }
 function onDBChange(listener) { if (dbChannel) dbChannel.addEventListener('message', event => { if (event.data?.type === 'changed') listener(); }); }
 
+/* 동기화가 지워진 항목을 되살리지 않도록 삭제 기록을 남긴다. */
+function addTombstone(tx, store, key, at) {
+  tx.objectStore('tombstones').put({ id:`${store}:${key}`, store, key, deletedAt:at });
+}
+
+/* 동기화 대상이 바뀌었음을 표시한다. 같은 이름의 알람이 덮어써져 연속 변경은 한 번으로 묶인다. */
+function noteLocalChange() {
+  if (typeof chrome === 'undefined' || !chrome.alarms) return;
+  chrome.storage.local.set({ syncDirty:true }).catch(() => {});
+  chrome.alarms.create('x-drawer-sync-soon', { delayInMinutes:1 });
+}
+
 async function withTransaction(stores, mode, callback) {
   const db = await openDB();
   try {
@@ -67,7 +80,7 @@ async function withTransaction(stores, mode, callback) {
       const tx = db.transaction(stores, mode);
       let value;
       try { value = callback(tx); } catch (error) { tx.abort(); reject(error); return; }
-      tx.oncomplete = () => { if (mode === 'readwrite') announceDBChange(); resolve(value); };
+      tx.oncomplete = () => { if (mode === 'readwrite') { announceDBChange(); noteLocalChange(); } resolve(value); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('数据库操作已取消。'));
     });
@@ -107,7 +120,8 @@ function normalizeRule(raw) {
     match: raw.match === 'all' ? 'all' : 'any',
     exclude: splitTerms(raw.exclude),
     tag: typeof raw.tag === 'string' ? raw.tag.trim().replace(/^#/, '').slice(0,40) : '',
-    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt.slice(0,30) : new Date().toISOString()
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt.slice(0,30) : new Date().toISOString(),
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt.slice(0,30) : ''
   };
 }
 function ruleText(item) {
@@ -126,14 +140,19 @@ function applyRuleTo(rule, item) {
   if (!rule.tag || applied.includes(mark) || !ruleMatches(rule, item)) return null;
   const tags = item.tags || [];
   const added = !tags.includes(rule.tag) && tags.length < 20;
-  return { added, item: { ...item, tags: added ? [...tags, rule.tag] : tags, ruleApplied: [...applied, mark].slice(-200) } };
+  return { added, item: { ...item, tags: added ? [...tags, rule.tag] : tags, ruleApplied: [...applied, mark].slice(-200), orgAt:new Date().toISOString() } };
 }
 async function getRules() {
   try { return (await getAll('smartRules')).map(rule => { try { return normalizeRule(rule); } catch { return null; } }).filter(Boolean); }
   catch { return []; }
 }
-async function putRule(rule) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').put(normalizeRule(rule))); }
-async function deleteRule(id) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').delete(id)); }
+async function putRule(rule) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').put({ ...normalizeRule(rule), updatedAt:new Date().toISOString() })); }
+async function deleteRule(id) {
+  await withTransaction(['smartRules','tombstones'], 'readwrite', tx => {
+    tx.objectStore('smartRules').delete(id);
+    addTombstone(tx, 'smartRules', id, new Date().toISOString());
+  });
+}
 
 /* 기존 글에 규칙을 적용한다. 되돌리기에 쓸 수 있도록 표시만 남긴 글과 태그를 붙인 글을 따로 돌려준다. */
 async function applyRuleToPosts(rule, keys) {
@@ -164,7 +183,7 @@ async function undoRuleApply(mark, tag, marked, added) {
       request.onsuccess = () => {
         const item = request.result;
         if (!item) return;
-        store.put({ ...item, tags: addedSet.has(key) ? (item.tags || []).filter(name => name !== tag) : item.tags, ruleApplied: (item.ruleApplied || []).filter(value => value !== mark) });
+        store.put({ ...item, tags: addedSet.has(key) ? (item.tags || []).filter(name => name !== tag) : item.tags, ruleApplied: (item.ruleApplied || []).filter(value => value !== mark), orgAt:new Date().toISOString() });
       };
     }
   });
@@ -174,7 +193,7 @@ async function undoRuleApply(mark, tag, marked, added) {
 function registerTags(store, names, at) {
   for (const name of new Set(names.filter(Boolean))) {
     const request = store.get(name);
-    request.onsuccess = () => { if (!request.result) store.put({ name, color:'', createdAt:at }); };
+    request.onsuccess = () => { if (!request.result) store.put({ name, color:'', createdAt:at, updatedAt:at }); };
   }
 }
 
@@ -189,7 +208,7 @@ async function savePosts(account, collection, items, mode = 'manual') {
       const request = store.get(key);
       request.onsuccess = () => {
         const previous = request.result;
-        let record = { ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], ruleApplied: previous?.ruleApplied || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', linkStatus:previous?.linkStatus || item.linkStatus || '', checkedAt:previous?.checkedAt || item.checkedAt || '', savedAt: previous?.savedAt || at, updatedAt: at };
+        let record = { ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], ruleApplied: previous?.ruleApplied || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', linkStatus:previous?.linkStatus || item.linkStatus || '', checkedAt:previous?.checkedAt || item.checkedAt || '', orgAt:previous?.orgAt || '', savedAt: previous?.savedAt || at, updatedAt: at };
         // 새로 가져오거나 저장한 글에 자동 태그 규칙을 적용한다.
         for (const rule of rules) {
           const result = applyRuleTo(rule, record);
@@ -227,22 +246,23 @@ async function importPosts(items) {
       const request = store.get(item.key);
       request.onsuccess = () => {
         const existing = request.result;
-        if (!existing) { store.put(item); registerTags(tagStore, item.tags || [], at); return; }
+        if (!existing) { store.put({ ...item, updatedAt:at }); registerTags(tagStore, item.tags || [], at); return; }
         const tags = [...new Set([...(existing.tags || []), ...(item.tags || [])])].slice(0,20);
         registerTags(tagStore, tags, at);
         const ruleApplied = [...new Set([...(existing.ruleApplied || []), ...(item.ruleApplied || [])])].slice(-200);
-        store.put({ ...existing, avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, tags, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '' });
+        store.put({ ...existing, avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, tags, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '', orgAt:at });
       };
     }
   });
 }
 
-async function deletePost(key) { await withTransaction('posts', 'readwrite', tx => tx.objectStore('posts').delete(key)); }
+async function deletePost(key) { await deletePosts([key]); }
 
 async function deletePosts(keys) {
-  await withTransaction('posts', 'readwrite', tx => {
+  const at = new Date().toISOString();
+  await withTransaction(['posts','tombstones'], 'readwrite', tx => {
     const store = tx.objectStore('posts');
-    for (const key of keys) store.delete(key);
+    for (const key of keys) { store.delete(key); addTombstone(tx, 'posts', key, at); }
   });
 }
 
@@ -250,7 +270,7 @@ async function updateTags(key, tags) {
   await withTransaction('posts', 'readwrite', tx => {
     const store = tx.objectStore('posts');
     const request = store.get(key);
-    request.onsuccess = () => { if (request.result) store.put({ ...request.result, tags }); };
+    request.onsuccess = () => { if (request.result) store.put({ ...request.result, tags, orgAt:new Date().toISOString() }); };
   });
 }
 
@@ -261,7 +281,7 @@ async function updateOrganization(key, tags, note) {
     registerTags(tx.objectStore('tags'), tags, at);
     const request = store.get(key);
     request.onsuccess = () => {
-      if (request.result) store.put({ ...request.result, tags, note, updatedAt:at });
+      if (request.result) store.put({ ...request.result, tags, note, orgAt:at });
     };
   });
 }
@@ -270,7 +290,7 @@ async function updatePostFields(key, fields) {
   await withTransaction('posts', 'readwrite', tx => {
     const store = tx.objectStore('posts');
     const request = store.get(key);
-    request.onsuccess = () => { if (request.result) store.put({ ...request.result, ...fields }); };
+    request.onsuccess = () => { if (request.result) store.put({ ...request.result, ...fields, orgAt:new Date().toISOString() }); };
   });
 }
 
@@ -284,7 +304,7 @@ async function updateManyPosts(keys, tags, readingState) {
       request.onsuccess = () => {
         const old = request.result;
         if (!old) return;
-        const next = { ...old, tags:[...new Set([...(old.tags || []), ...tags])].slice(0,20), updatedAt:at };
+        const next = { ...old, tags:[...new Set([...(old.tags || []), ...tags])].slice(0,20), orgAt:at };
         if (readingState !== 'keep') next.readingState = readingState;
         store.put(next);
       };
@@ -295,7 +315,7 @@ async function updateManyPosts(keys, tags, readingState) {
 /* 태그 이름을 모든 글에서 한 번에 바꾼다. 같은 이름이 이미 있으면 합친다. */
 async function renameTagEverywhere(from, to) {
   const at = new Date().toISOString();
-  await withTransaction(['posts','tags','smartRules'], 'readwrite', tx => {
+  await withTransaction(['posts','tags','smartRules','tombstones'], 'readwrite', tx => {
     const posts = tx.objectStore('posts');
     const tagStore = tx.objectStore('tags');
     // 이름이 바뀐 태그를 붙이는 규칙과 글의 적용 표시도 함께 옮긴다.
@@ -304,7 +324,7 @@ async function renameTagEverywhere(from, to) {
     rules.openCursor().onsuccess = event => {
       const cursor = event.target.result;
       if (!cursor) return;
-      if (cursor.value.tag === from) cursor.update({ ...cursor.value, tag:to });
+      if (cursor.value.tag === from) cursor.update({ ...cursor.value, tag:to, updatedAt:at });
       cursor.continue();
     };
     posts.openCursor().onsuccess = event => {
@@ -314,7 +334,7 @@ async function renameTagEverywhere(from, to) {
       const marks = Array.isArray(cursor.value.ruleApplied) ? cursor.value.ruleApplied : [];
       if (tags.includes(from) || marks.some(mark => renameMark(mark) !== mark)) {
         const next = [...new Set(tags.map(tag => (tag === from ? to : tag)))].slice(0,20);
-        cursor.update({ ...cursor.value, tags:next, ruleApplied:[...new Set(marks.map(renameMark))], updatedAt:at });
+        cursor.update({ ...cursor.value, tags:next, ruleApplied:[...new Set(marks.map(renameMark))], orgAt:at });
       }
       cursor.continue();
     };
@@ -322,8 +342,8 @@ async function renameTagEverywhere(from, to) {
     oldMeta.onsuccess = () => {
       const existing = tagStore.get(to);
       existing.onsuccess = () => {
-        tagStore.put({ name:to, color:existing.result?.color || oldMeta.result?.color || '', createdAt:existing.result?.createdAt || oldMeta.result?.createdAt || at });
-        if (from !== to) tagStore.delete(from);
+        tagStore.put({ name:to, color:existing.result?.color || oldMeta.result?.color || '', createdAt:existing.result?.createdAt || oldMeta.result?.createdAt || at, updatedAt:at });
+        if (from !== to) { tagStore.delete(from); addTombstone(tx, 'tags', from, at); }
       };
     };
   });
@@ -331,22 +351,28 @@ async function renameTagEverywhere(from, to) {
 
 async function removeTagEverywhere(name) {
   const at = new Date().toISOString();
-  await withTransaction(['posts','tags'], 'readwrite', tx => {
+  await withTransaction(['posts','tags','tombstones'], 'readwrite', tx => {
     tx.objectStore('tags').delete(name);
+    addTombstone(tx, 'tags', name, at);
     tx.objectStore('posts').openCursor().onsuccess = event => {
       const cursor = event.target.result;
       if (!cursor) return;
       const tags = Array.isArray(cursor.value.tags) ? cursor.value.tags : [];
-      if (tags.includes(name)) cursor.update({ ...cursor.value, tags:tags.filter(tag => tag !== name), updatedAt:at });
+      if (tags.includes(name)) cursor.update({ ...cursor.value, tags:tags.filter(tag => tag !== name), orgAt:at });
       cursor.continue();
     };
   });
 }
 
-async function putTagMeta(tag) { await withTransaction('tags', 'readwrite', tx => tx.objectStore('tags').put(tag)); }
+async function putTagMeta(tag) { await withTransaction('tags', 'readwrite', tx => tx.objectStore('tags').put({ ...tag, updatedAt:new Date().toISOString() })); }
 
-async function saveView(view) { await withTransaction('savedViews', 'readwrite', tx => tx.objectStore('savedViews').put(view)); }
-async function deleteView(id) { await withTransaction('savedViews', 'readwrite', tx => tx.objectStore('savedViews').delete(id)); }
+async function saveView(view) { await withTransaction('savedViews', 'readwrite', tx => tx.objectStore('savedViews').put({ ...view, updatedAt:new Date().toISOString() })); }
+async function deleteView(id) {
+  await withTransaction(['savedViews','tombstones'], 'readwrite', tx => {
+    tx.objectStore('savedViews').delete(id);
+    addTombstone(tx, 'savedViews', id, new Date().toISOString());
+  });
+}
 
 async function savePerson(person) {
   await withTransaction('people', 'readwrite', tx => tx.objectStore('people').put(person));

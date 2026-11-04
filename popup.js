@@ -62,3 +62,6 @@ $('#popScan').addEventListener('click', () => openLibrary({ scan: '1' }));
 
 if (typeof XTheme !== 'undefined') XTheme.bind($('#themeToggle'));
 loadStats();
+chrome.storage?.local.get('syncState').then(({ syncState }) => {
+  if (syncState?.connected) $('#popPrivacy').textContent = '数据保存在此浏览器，并同步到你的 Google Drive';
+}).catch(() => {});

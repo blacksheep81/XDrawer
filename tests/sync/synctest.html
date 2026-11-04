@@ -1,0 +1,377 @@
+<!doctype html><meta charset="utf-8"><title>Drive sync tests</title>
+<style>body{font:14px/1.6 system-ui;margin:24px}li.fail{color:#a8362f;white-space:pre-wrap}li.pass{color:#27694f}iframe{position:absolute;width:1000px;height:700px;left:-2000px}</style>
+<h1 id="summary">运行中…</h1><ul id="list"></ul>
+<script>
+/* In-memory stand-ins for chrome.* and Google Drive. One IndexedDB is swapped between "devices". */
+const mem = { local:{}, session:{} };
+const area = name => ({
+  get: async key => (key in mem[name] ? { [key]:structuredClone(mem[name][key]) } : {}),
+  set: async obj => { Object.assign(mem[name], structuredClone(obj)); },
+  remove: async key => { delete mem[name][key]; }
+});
+window.authMode = 'ok'; window.authCalls = [];
+window.chrome = {
+  storage:{ local:area('local'), session:area('session') },
+  alarms:{ create(){} },
+  identity:{ getRedirectURL:() => 'https://cfpjibdhkfnibjiigeiebdmmodmkclcd.chromiumapp.org/', launchWebAuthFlow: async ({ url, interactive }) => {
+    authCalls.push({ interactive, url });
+    if (authMode === 'fail') throw new Error('User interaction required.');
+    const u = new URL(url);
+    return `${u.searchParams.get('redirect_uri')}#access_token=tok${authCalls.length}&expires_in=3600&state=${u.searchParams.get('state')}`;
+  } }
+};
+const drive = window.drive = { file:null, rev:0, uploads:0, downloads:0, reject401:0, beforeRecheck:null, listCalls:0 };
+const realFetch = window.fetch.bind(window);
+const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers:{ 'Content-Type':'application/json' } });
+window.fetch = async (url, init = {}) => {
+  const u = new URL(url, location.href), method = init.method || 'GET';
+  if (!['www.googleapis.com','oauth2.googleapis.com'].includes(u.hostname)) return realFetch(url, init);
+  if (u.hostname === 'oauth2.googleapis.com') return json({});
+  if (drive.reject401 > 0) { drive.reject401--; return json({}, 401); }
+  if (u.pathname === '/oauth2/v3/userinfo') return json({ email:'me@example.com' });
+  if (u.pathname === '/drive/v3/files' && method === 'GET') {
+    drive.listCalls++;
+    if (drive.beforeRecheck && drive.listCalls === drive.beforeRecheck.at) drive.beforeRecheck.run();
+    if (u.searchParams.get('spaces') !== 'appDataFolder') return json({}, 400);
+    return json({ files:drive.file ? [{ id:'f1', headRevisionId:`r${drive.rev}`, modifiedTime:'2026-01-01T00:00:00Z' }] : [] });
+  }
+  if (u.pathname === '/drive/v3/files/f1' && method === 'GET') { drive.downloads++; return new Response(drive.file); }
+  if (u.pathname === '/drive/v3/files/f1' && method === 'DELETE') { drive.file = null; return new Response(null, { status:204 }); }
+  if (u.pathname.startsWith('/upload/drive/v3/files') && method !== 'PUT') return new Response(null, { status:200, headers:{ Location:'https://www.googleapis.com/upload/session/1' } });
+  if (u.pathname === '/upload/session/1' && method === 'PUT') { drive.file = await new Response(init.body).arrayBuffer(); drive.rev++; drive.uploads++; return json({ id:'f1', headRevisionId:`r${drive.rev}` }); }
+  return json({}, 404);
+};
+</script>
+<script src="/db.js"></script>
+<script src="/records.js"></script>
+<script src="/sync.js"></script>
+<script>
+const results = [];
+const check = (name, ok, detail = '') => results.push({ name, ok:!!ok, detail:ok ? '' : String(detail) });
+const STORES = ['posts','people','savedViews','tags','smartRules','tombstones','history'];
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const P = (id, extra = {}) => ({ id:String(id), url:`https://x.com/u/status/${id}`, username:'u', author:'U', text:`text ${id}`, media:'text', imageUrls:[], links:[], tags:[], ...extra });
+async function dumpDb() {
+  const out = {};
+  for (const store of STORES) out[store] = await getAll(store);
+  return out;
+}
+async function loadDb(d) {
+  const db = await openDB();
+  await new Promise((res, rej) => { const tx = db.transaction(STORES, 'readwrite'); for (const s of STORES) { const os = tx.objectStore(s); os.clear(); for (const row of d?.[s] || []) os.put(row); } tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  db.close();
+}
+const devices = {}; let current = null;
+async function use(name) {
+  if (current) devices[current] = { db:await dumpDb(), local:structuredClone(mem.local), session:structuredClone(mem.session) };
+  const d = devices[name] || { db:null, local:{}, session:{} };
+  await loadDb(d.db); mem.local = d.local; mem.session = d.session; current = name;
+}
+const postKeys = async () => (await getAll('posts')).map(p => p.key).sort().join();
+let dbEvents = 0;
+new BroadcastChannel('x-drawer-db').onmessage = () => { dbEvents++; };
+
+function pureTests() {
+  const base = { id:'1', key:'a:like:1', account:'a', collection:'like', url:'https://x.com/u/status/1' };
+  const T = n => new Date(1.7e12 + n * 1000).toISOString();
+  const r1 = mergePost({ ...base, text:'old', tags:['x'], updatedAt:T(1), orgAt:T(5), savedAt:T(0) }, { ...base, text:'new', tags:[], updatedAt:T(9), orgAt:T(2), savedAt:T(3) });
+  check('rescan text wins but newer tags survive', r1.text === 'new' && r1.tags.join() === 'x' && r1.savedAt === T(0) && r1.updatedAt === T(9) && r1.orgAt === T(5), JSON.stringify(r1));
+  const r2 = mergePost({ ...base, tags:['b','a'], note:'long note', readingState:'later', ruleApplied:['r1:a'] }, { ...base, tags:['c','a'], note:'n', readingState:'read', ruleApplied:['r2:c'] });
+  check('legacy tie unions tags and rule marks', r2.tags.join() === 'a,b,c' && r2.note === 'long note' && r2.readingState === 'read' && r2.ruleApplied.join() === 'r1:a,r2:c', JSON.stringify(r2));
+  const r3 = mergePost({ ...base, tags:['auto'], ruleApplied:['r:auto'], orgAt:T(1) }, { ...base, tags:[], ruleApplied:['r:auto'], orgAt:T(2) });
+  check('removing a rule tag later is respected', r3.tags.length === 0 && r3.ruleApplied.join() === 'r:auto', JSON.stringify(r3));
+  // Random pairs: order must not matter, and merging again must change nothing.
+  let seed = 7; const rnd = n => (seed = (seed * 16807) % 2147483647) % n;
+  const randomPost = () => ({ ...base, text:`t${rnd(3)}`, tags:['a','b','c','d'].filter(() => rnd(2)), ruleApplied:['x:1','y:2'].filter(() => rnd(2)), note:['','n','nn','mm'][rnd(4)], readingState:['none','later','read'][rnd(3)], linkStatus:['','available','unknown'][rnd(3)], checkedAt:rnd(2) ? T(rnd(4)) : '', updatedAt:rnd(2) ? T(rnd(4)) : '', orgAt:rnd(2) ? T(rnd(4)) : '', savedAt:T(rnd(4)) });
+  let commutative = true, idempotent = true, bad = '';
+  for (let i = 0; i < 3000; i++) {
+    const a = randomPost(), b = randomPost(), ab = mergePost(a, b), ba = mergePost(b, a);
+    if (stable(ab) !== stable(ba)) { commutative = false; bad = stable(a) + ' | ' + stable(b); }
+    if (stable(mergePost(ab, ab)) !== stable(ab) || stable(mergePost(ab, b)) !== stable(ab)) { idempotent = false; bad = bad || stable(a) + ' | ' + stable(b); }
+  }
+  check('merge is order independent (3000 random pairs)', commutative, bad);
+  check('merging again changes nothing (3000 random pairs)', idempotent, bad);
+  const now = 1.7e12 + 1e6;
+  const rec = { ...base, updatedAt:T(5), savedAt:T(1), orgAt:'' };
+  const grave = at => ({ id:'posts:a:like:1', store:'posts', key:'a:like:1', deletedAt:T(at) });
+  let m = mergeSnapshots({ posts:[rec] }, { tombstones:[grave(9)] }, now);
+  check('delete after last edit removes post', m.posts.length === 0 && m.tombstones.length === 1, JSON.stringify(m));
+  m = mergeSnapshots({ posts:[rec] }, { tombstones:[grave(2)] }, now);
+  check('save after delete keeps post', m.posts.length === 1 && m.tombstones.length === 0, JSON.stringify(m));
+  m = mergeSnapshots({ posts:[rec] }, { tombstones:[grave(9)] }, 1.7e12 + 200 * 86400000);
+  check('expired delete record is dropped', m.posts.length === 1 && m.tombstones.length === 0, JSON.stringify(m));
+  check('junk remote records are dropped', normalizeSnapshot({ posts:[{ key:'x' }, null], tags:[{ name:'' }], smartRules:[{ id:'BAD' }], tombstones:[{ id:'zz' }, null] }).posts.length === 0);
+  const rule = { id:'r-1', name:'n', keywords:['k'], createdAt:'' };
+  const cleaned = normalizeList('smartRules', [rule])[0];
+  check('normalizing a rule is repeatable', cleaned && stable(normalizeList('smartRules', [cleaned])[0]) === stable(cleaned), JSON.stringify(cleaned));
+}
+
+async function upgradeTest() {
+  // A v6 library, as main creates it: smart rules present, no delete records yet.
+  await new Promise(r => { const q = indexedDB.deleteDatabase('x-drawer'); q.onsuccess = q.onerror = r; });
+  await new Promise((res, rej) => {
+    const q = indexedDB.open('x-drawer', 6);
+    q.onupgradeneeded = () => {
+      const db = q.result;
+      const posts = db.createObjectStore('posts', { keyPath:'key' }); posts.createIndex('collection', 'collection'); posts.createIndex('account', 'account');
+      db.createObjectStore('history', { keyPath:'id', autoIncrement:true }); db.createObjectStore('people', { keyPath:'handle' });
+      db.createObjectStore('followerSnapshots', { keyPath:'id', autoIncrement:true }).createIndex('account', 'account');
+      db.createObjectStore('savedViews', { keyPath:'id' }); db.createObjectStore('tags', { keyPath:'name' });
+      const rules = db.createObjectStore('smartRules', { keyPath:'id' });
+      posts.put({ ...P(42, { tags:['old'] }), key:'me:like:42', account:'me', collection:'like', savedAt:'2026-01-01T00:00:00.000Z', updatedAt:'2026-01-01T00:00:00.000Z' });
+      rules.put({ id:'r-old', name:'old rule', keywords:['x'], authors:[], match:'any', exclude:[], tag:'', createdAt:'2026-01-01T00:00:00.000Z' });
+    };
+    q.onsuccess = () => { q.result.close(); res(); }; q.onerror = () => rej(q.error);
+  });
+  const rows = await getAll('posts');
+  check('v6 library upgrades with posts intact', rows.length === 1 && rows[0].tags[0] === 'old', JSON.stringify(rows));
+  check('v6 library keeps smart rules', (await getRules()).length === 1 && (await getAll('tombstones')).length === 0);
+  await deletePost('me:like:42');
+  check('delete works after upgrade', (await getAll('tombstones')).length === 1);
+  await new Promise(r => { const q = indexedDB.deleteDatabase('x-drawer'); q.onsuccess = q.onerror = r; });
+}
+
+async function e2e() {
+  await use('A');
+  await savePosts('me', 'like', [P(1), P(2)]);
+  await connectSync();
+  check('A connected and uploaded', drive.uploads === 1 && (await readSyncState()).email === 'me@example.com', JSON.stringify(await readSyncState()));
+
+  await use('B');
+  await savePosts('me', 'bookmark', [P(3)]);
+  await connectSync();
+  check('B merges cloud with its own posts', (await postKeys()) === 'me:bookmark:3,me:like:1,me:like:2', await postKeys());
+  check('B uploaded the union', drive.uploads === 2, drive.uploads);
+
+  await use('A');
+  const eventsBefore = dbEvents;
+  await runSync();
+  await wait(50);
+  check('A receives B posts', (await postKeys()) === 'me:bookmark:3,me:like:1,me:like:2', await postKeys());
+  check('open library is told about received data', dbEvents > eventsBefore);
+  const uploads = drive.uploads;
+  check('converged: A does not re-upload', uploads === 2, uploads);
+  await runSync();
+  await use('B'); await runSync(); await runSync();
+  check('quiet syncs upload nothing', drive.uploads === uploads, `${uploads} -> ${drive.uploads}`);
+  const dl = drive.downloads; await runSync();
+  check('unchanged sync skips the download', drive.downloads === dl, `${dl} -> ${drive.downloads}`);
+
+  // Edit on A + rescan on B, both offline, then sync in both orders.
+  await use('A');
+  await updateOrganization('me:like:1', ['keep'], 'my note');
+  await wait(5);
+  await use('B');
+  await savePosts('me', 'like', [P(1, { text:'edited on X' })]);
+  await runSync();
+  await use('A');
+  await runSync();
+  let p = (await getAll('posts')).find(x => x.key === 'me:like:1');
+  check('rescan keeps tags from the other device', p.text === 'edited on X' && p.tags.join() === 'keep' && p.note === 'my note', JSON.stringify(p));
+  await use('B'); await runSync();
+  p = (await getAll('posts')).find(x => x.key === 'me:like:1');
+  check('both devices converge on the edit', p.text === 'edited on X' && p.tags.join() === 'keep', JSON.stringify(p));
+
+  // Delete propagates and does not come back.
+  await use('A');
+  await deletePost('me:like:2');
+  await runSync();
+  await use('B');
+  check('B still has it before syncing', (await postKeys()).includes('me:like:2'));
+  await runSync();
+  check('delete reaches B', !(await postKeys()).includes('me:like:2'), await postKeys());
+  await runSync();
+  await use('A'); await runSync();
+  check('deleted post stays deleted on A', !(await postKeys()).includes('me:like:2'), await postKeys());
+
+  // Tag rename and removal.
+  await renameTagEverywhere('keep', 'renamed');
+  await runSync();
+  await use('B'); await runSync();
+  p = (await getAll('posts')).find(x => x.key === 'me:like:1');
+  const names = (await getAll('tags')).map(t => t.name).join();
+  check('tag rename propagates', p.tags.join() === 'renamed' && names === 'renamed', `${p.tags} / ${names}`);
+
+  // Views and people.
+  await saveView({ id:'v-1', name:'view', settings:{ view:'all', tags:[] } });
+  await savePerson({ handle:'abc', label:'L', match:'', note:'', privateAccount:false, updatedAt:new Date().toISOString() });
+  await runSync();
+  await use('A'); await runSync();
+  check('views and people sync', (await getAll('savedViews')).length === 1 && (await getAll('people')).length === 1);
+  await deleteView('v-1'); await runSync();
+  await use('B'); await runSync();
+  check('view delete syncs', (await getAll('savedViews')).length === 0);
+
+  // Smart rules: the rule, its auto tag and its "already applied" mark all travel.
+  await putRule({ id:'r-1', name:'rule', keywords:['text'], tag:'auto' });
+  const key3 = 'me:bookmark:3';
+  const applied = await applyRuleToPosts((await getRules()).find(r => r.id === 'r-1'), [key3]);
+  check('rule applies locally', applied.added.join() === key3, JSON.stringify(applied));
+  await runSync();
+  await use('A'); await runSync();
+  p = (await getAll('posts')).find(x => x.key === key3);
+  check('smart rule reaches the other device', (await getRules()).some(r => r.id === 'r-1' && r.tag === 'auto'));
+  check('rule tag and mark reach the other device', p.tags.includes('auto') && p.ruleApplied.includes('r-1:auto') && (await getAll('tags')).some(t => t.name === 'auto'), JSON.stringify(p));
+  await updateOrganization(key3, [], '');
+  await runSync();
+  await use('B'); await runSync();
+  await savePosts('me', 'bookmark', [P(3)]);
+  p = (await getAll('posts')).find(x => x.key === key3);
+  check('tag removed elsewhere is not re-added by the rule', p.tags.length === 0 && p.ruleApplied.includes('r-1:auto'), JSON.stringify(p));
+  await renameTagEverywhere('auto', 'auto2');
+  await runSync();
+  await use('A'); await runSync();
+  check('renaming a rule tag syncs the rule', (await getRules()).find(r => r.id === 'r-1')?.tag === 'auto2', JSON.stringify(await getRules()));
+  await deleteRule('r-1'); await runSync();
+  await use('B'); await runSync();
+  check('rule delete syncs', !(await getRules()).some(r => r.id === 'r-1'), JSON.stringify(await getRules()));
+
+  // Another device uploads between download and upload: must re-merge, not overwrite.
+  await use('C');
+  await connectSync();
+  check('third device gets everything', (await postKeys()).includes('me:bookmark:3'), await postKeys());
+  const cSnapshot = drive.file;
+  await use('A');
+  await savePosts('me', 'saved', [P(7)]);
+  await use('B');
+  await savePosts('me', 'saved', [P(8)]);
+  await runSync();
+  const afterB = { file:drive.file, rev:drive.rev };
+  // Rewind the cloud so A downloads the old copy, then B's upload lands during A's sync.
+  drive.file = cSnapshot; drive.rev += 1;
+  await use('A');
+  drive.listCalls = 0;
+  drive.beforeRecheck = { at:2, run:() => { drive.file = afterB.file; drive.rev += 1; } };
+  await runSync();
+  drive.beforeRecheck = null;
+  check('concurrent upload is re-merged', (await postKeys()).includes(':8') && (await postKeys()).includes(':7'), await postKeys());
+  await use('B'); await runSync();
+  check('nothing lost after the race', (await postKeys()).includes(':7') && (await postKeys()).includes(':8'), await postKeys());
+
+  // Expired token renews silently.
+  await use('A');
+  await updatePostFields('me:saved:7', { readingState:'read' });
+  drive.reject401 = 1;
+  const before = authCalls.length;
+  const s1 = await runSync();
+  check('401 renews token silently', !s1.lastError && authCalls.length === before + 1 && authCalls.at(-1).interactive === false && authCalls.at(-1).url.includes('prompt=none'), JSON.stringify(s1));
+  check('auth uses the pinned redirect URI', new URL(authCalls.at(-1).url).searchParams.get('redirect_uri') === 'https://cfpjibdhkfnibjiigeiebdmmodmkclcd.chromiumapp.org/');
+
+  // Silent renewal impossible: ask for login, keep changes pending, never pop a window.
+  await updatePostFields('me:saved:7', { readingState:'later' });
+  authMode = 'fail'; mem.session = {};
+  const s2 = await runSync();
+  check('failed login is reported', s2.needsLogin && !!s2.lastError, JSON.stringify(s2));
+  check('no interactive popup in background', authCalls.at(-1).interactive === false);
+  check('changes stay marked for later', mem.local.syncDirty === true, mem.local.syncDirty);
+  authMode = 'ok';
+  const s3 = await runSync();
+  check('recovers after login works again', !s3.lastError && !s3.needsLogin && mem.local.syncDirty === false, JSON.stringify(s3));
+
+  // Corrupt or future cloud files are never overwritten.
+  const good = drive.file;
+  const keys = await postKeys();
+  for (const [name, bytes, needle] of [
+    ['corrupt', new TextEncoder().encode('not json').buffer, '无法读取'],
+    ['wrong format', new TextEncoder().encode('{"format":"other"}').buffer, '无法读取'],
+    ['future version', new TextEncoder().encode(`{"format":"${SYNC_FORMAT}","version":99}`).buffer, '更新版本']
+  ]) {
+    drive.file = bytes; drive.rev++;
+    const up = drive.uploads;
+    await updatePostFields('me:saved:7', { note:name });
+    const s = await runSync();
+    check(`${name}: stops without overwriting`, s.lastError?.includes(needle) && drive.uploads === up && drive.file === bytes && (await postKeys()) === keys, JSON.stringify(s));
+  }
+  drive.file = good; drive.rev++;
+  const s4 = await runSync();
+  check('sync resumes once the file is good', !s4.lastError, JSON.stringify(s4));
+
+  // Disconnect.
+  await use('B');
+  const off = await disconnectSync(false);
+  check('disconnect keeps cloud copy', !off.connected && !!drive.file && !mem.session.syncToken, JSON.stringify(off));
+  const up = drive.uploads; await runSync();
+  check('disconnected device does not sync', drive.uploads === up);
+  await use('A');
+  const gone = await disconnectSync(true);
+  check('delete cloud copy removes the file', !gone.connected && drive.file === null && (await postKeys()).length > 0);
+}
+
+async function backgroundTest() {
+  // Loads the real service worker source; X pages must not be able to reach the sync actions.
+  const src = await (await realFetch('/background.js')).text();
+  const listeners = []; const alarms = [];
+  const stub = { ...chrome, runtime:{ getURL:p => `chrome-extension://abc/${p}`, onMessage:{ addListener:f => listeners.push(f) } }, alarms:{ onAlarm:{ addListener(){} }, create:name => alarms.push(name) } };
+  new Function('chrome', 'importScripts', src)(stub, () => {});
+  const listener = listeners[1];
+  const ask = (message, url) => new Promise(res => { if (listener(message, { url }, res) !== true) res('ignored'); });
+  check('X pages cannot request sync actions', (await ask({ type:'SYNC_DISCONNECT', deleteCloud:true }, 'https://x.com/home')) === 'ignored');
+  const status = await ask({ type:'SYNC_STATUS' }, 'chrome-extension://abc/library.html');
+  check('extension pages can read sync status', status?.ok && status.configured === true, JSON.stringify(status));
+  check('unknown messages are ignored', (await ask({ type:'SAVE_VISIBLE_POST' }, 'chrome-extension://abc/library.html')) === 'ignored');
+  check('periodic sync is scheduled', alarms.includes('x-drawer-sync-periodic'), alarms.join());
+}
+
+async function libraryTest() {
+  // Starts the real library page, then restores a v7 backup through its file input.
+  await loadDb(null);
+  const errors = [];
+  const onMessage = event => { if (event.data?.libraryError) errors.push(event.data.libraryError); };
+  window.addEventListener('message', onMessage);
+  const frame = document.createElement('iframe');
+  frame.src = '/library.html';
+  document.body.append(frame);
+  await new Promise(r => { frame.onload = r; });
+  const doc = () => frame.contentDocument;
+  const until = async (test, ms = 5000) => { const end = Date.now() + ms; while (Date.now() < end) { if (test()) return true; await wait(50); } return false; };
+  await until(() => doc().querySelector('#syncOpen')?.textContent.includes('未连接'));
+  check('library shows sync entry', doc().querySelector('#syncOpen')?.textContent === '☁ 同步：未连接', doc().querySelector('#syncOpen')?.textContent);
+  doc().querySelector('#syncOpen').click();
+  check('unconfigured sync offers no connect button', doc().querySelector('#syncConnect').hidden && !doc().querySelector('#syncSetup').hidden);
+  doc().querySelector('#syncClose').click();
+
+  const backup = { format:'x-drawer-backup', version:7, posts:[{ ...P(9, { tags:['bk'] }), key:'me:like:9', account:'me', collection:'like', ruleApplied:['r-b:bk'], savedAt:'2026-01-01T00:00:00.000Z' }],
+    people:[{ handle:'bob', label:'Bob', updatedAt:'' }], savedViews:[{ id:'v-b', name:'bv', settings:{ view:'all', tags:['bk'] } }], tags:[{ name:'bk', color:'#112233', createdAt:'' }],
+    smartRules:[{ id:'r-b', name:'br', keywords:['k'], tag:'bk', createdAt:'2026-01-01T00:00:00.000Z' }] };
+  const input = doc().querySelector('#importFile');
+  const files = new frame.contentWindow.DataTransfer();
+  files.items.add(new frame.contentWindow.File([JSON.stringify(backup)], 'b.json', { type:'application/json' }));
+  input.files = files.files;
+  input.dispatchEvent(new frame.contentWindow.Event('change', { bubbles:true }));
+  await until(() => doc().querySelector('#notice')?.textContent.includes('已导入') || doc().querySelector('#notice')?.textContent.includes('失败'));
+  check('v7 backup restores through moved validators', doc().querySelector('#notice').textContent.includes('已导入'), doc().querySelector('#notice').textContent);
+  const posts = await getAll('posts');
+  const tag = (await getAll('tags')).find(t => t.name === 'bk');
+  check('restored records stay complete', posts[0]?.ruleApplied?.join() === 'r-b:bk' && (await getAll('people')).length === 1 && (await getAll('savedViews')).length === 1 && tag?.color === '#112233' && (await getRules()).length === 1, JSON.stringify(posts));
+  check('restored records carry sync clocks', !!posts[0]?.updatedAt && !!tag?.updatedAt);
+  await until(() => doc().querySelectorAll('#cards .card').length === 1);
+  check('library renders restored post', doc().querySelectorAll('#cards .card').length === 1);
+  check('library runs without page errors', errors.length === 0, errors.join('\n'));
+  window.removeEventListener('message', onMessage);
+  frame.remove();
+  await wait(50);
+}
+
+async function scaleTest() {
+  await loadDb(null);
+  mem.local = { syncState:{ connected:true, email:'me@example.com' }, syncDirty:true }; mem.session = {}; drive.file = null; drive.reject401 = 0;
+  const items = []; for (let i = 0; i < 10000; i++) items.push(P(1800000000000000000n + BigInt(i), { text:('这是一条用于测速的模拟帖子 ' + i + ' ').repeat(8), tags:i % 5 ? [] : [`t${i % 30}`] }));
+  await savePosts('me', 'like', items);
+  let t = performance.now(); const s1 = await runSync(); const first = Math.round(performance.now() - t);
+  mem.local.syncDirty = true; t = performance.now(); await runSync(); const second = Math.round(performance.now() - t);
+  check('10,000 posts sync without error', !s1.lastError && drive.uploads > 0, JSON.stringify(s1));
+  return `10000 posts: first sync ${first}ms, no-change resync ${second}ms, cloud file ${Math.round(drive.file.byteLength / 1024)}KB`;
+}
+
+(async () => {
+  let scale = '';
+  try { pureTests(); await upgradeTest(); await e2e(); await backgroundTest(); await libraryTest(); scale = await scaleTest(); }
+  catch (error) { check('test run crashed', false, `${error.message}\n${error.stack}`); }
+  await new Promise(r => { const q = indexedDB.deleteDatabase('x-drawer'); q.onsuccess = q.onerror = q.onblocked = r; });
+  const failed = results.filter(r => !r.ok), passed = results.length - failed.length;
+  document.querySelector('#summary').textContent = `${passed} passed, ${failed.length} failed`;
+  document.querySelector('#list').innerHTML = results.map(r => `<li class="${r.ok ? 'pass' : 'fail'}"></li>`).join('');
+  document.querySelectorAll('#list li').forEach((li, i) => { li.textContent = results[i].ok ? results[i].name : `${results[i].name}\n${results[i].detail}`; });
+  if (new URLSearchParams(location.search).has('report')) await realFetch('/report', { method:'POST', body:JSON.stringify({ passed, failed, scale }) });
+})();
+</script>
