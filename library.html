@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>X 抽屉</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
+</head>
+<body>
+
+<div class="app">
+
+  <aside class="rail">
+    <div class="brand">
+      <span class="drawer-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="brand-text">X 抽屉<small class="u-mono">LOCAL DRAWER</small></span>
+    </div>
+
+    <nav aria-label="收藏库">
+      <button class="nav active" data-view="all" data-tone="all"><span class="nav-dot"></span><span>全部收藏</span><b id="allCount">0</b></button>
+      <button class="nav" data-view="bookmark" data-tone="bookmark"><span class="nav-dot"></span><span>书签</span><b id="bookmarkCount">0</b></button>
+      <button class="nav" data-view="like" data-tone="like"><span class="nav-dot"></span><span>喜欢</span><b id="likeCount">0</b></button>
+      <button class="nav" data-view="saved" data-tone="saved"><span class="nav-dot"></span><span>手动保存</span><b id="savedCount">0</b></button>
+      <button class="nav" data-view="people" data-tone="people"><span class="nav-dot"></span><span>人物·小号</span><b id="peopleCount">0</b></button>
+    </nav>
+
+    <div class="rail-foot">
+      <div class="theme-switch" id="themeToggle" role="group" aria-label="界面主题">
+        <button type="button" data-theme-set="system" title="跟随系统设置">系统</button>
+        <button type="button" data-theme-set="light" title="浅色界面">浅色</button>
+        <button type="button" data-theme-set="dark" title="深色界面">深色</button>
+      </div>
+      <p class="rail-note"><span class="status-dot"></span> 仅保存在此设备</p>
+    </div>
+  </aside>
+
+  <main>
+    <header class="page-head">
+      <div>
+        <p class="u-mono" id="eyebrow">LOCAL ARCHIVE</p>
+        <h1 id="title">全部收藏</h1>
+        <p id="subtitle" class="subtitle">找回刷过的帖子，属于你自己的 X 存档。</p>
+      </div>
+      <div class="head-actions">
+        <button id="manageTags" class="ghost" type="button">◇ 标签管理</button>
+        <button id="scanButton" class="primary" type="button">＋ 从 X 导入</button>
+      </div>
+    </header>
+
+    <div id="postsPanel">
+
+      <section class="searchbar">
+        <label class="search" for="search">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="search" type="search" autocomplete="off" placeholder='搜索 · "精确短语"  -排除  from:账号  tag:标签  has:image'>
+        </label>
+        <button id="resetFilters" class="ghost" type="button">重置筛选</button>
+      </section>
+
+      <p class="search-tip">
+        <code>"设计系统"</code> 精确短语 ·
+        <code>-广告</code> 排除 ·
+        <code>from:elonmusk</code> 作者 ·
+        <code>tag:待读</code> 标签 ·
+        <code>has:image</code> / <code>has:link</code> / <code>has:note</code>
+      </p>
+
+      <section class="filterbar" aria-label="筛选">
+        <select id="sort" aria-label="排序">
+          <option value="saved">最近保存</option>
+          <option value="posted">最近发布</option>
+          <option value="oldest">最早发布</option>
+          <option value="likes">喜欢数最多</option>
+          <option value="views">浏览量最多</option>
+          <option value="author">作者名称</option>
+        </select>
+        <select id="accountFilter" aria-label="保存账号"><option value="all">所有账号</option></select>
+        <select id="authorFilter" aria-label="作者"><option value="all">所有作者</option></select>
+        <select id="media" aria-label="媒体类型">
+          <option value="all">所有类型</option>
+          <option value="text">文本</option>
+          <option value="image">图片</option>
+          <option value="video">视频</option>
+        </select>
+        <select id="datePreset" aria-label="时间范围">
+          <option value="all">全部时间</option>
+          <option value="7">最近 7 天</option>
+          <option value="30">最近 30 天</option>
+          <option value="90">最近 90 天</option>
+          <option value="365">最近 1 年</option>
+          <option value="custom">自定义</option>
+        </select>
+        <button id="advancedToggle" class="ghost" type="button" aria-expanded="false" aria-controls="advancedPanel">高级筛选 ▾</button>
+      </section>
+
+      <section id="advancedPanel" class="advanced" hidden>
+        <label class="field"><span>开始日期</span><input id="fromDate" type="date"></label>
+        <label class="field"><span>结束日期</span><input id="toDate" type="date"></label>
+        <label class="field"><span>阅读状态</span>
+          <select id="readFilter">
+            <option value="all">所有阅读状态</option>
+            <option value="later">稍后阅读</option>
+            <option value="read">已读</option>
+            <option value="none">未分类</option>
+          </select>
+        </label>
+        <label class="field"><span>原帖状态</span>
+          <select id="linkFilter">
+            <option value="all">所有原帖状态</option>
+            <option value="attention">无法访问·无法确认</option>
+            <option value="unavailable">无法访问</option>
+            <option value="unknown">无法确认</option>
+            <option value="unchecked">未检查</option>
+            <option value="available">可以查看</option>
+          </select>
+        </label>
+        <label class="field"><span>显示方式</span>
+          <select id="layout">
+            <option value="cards">卡片视图</option>
+            <option value="list">列表视图</option>
+            <option value="compact">紧凑视图</option>
+          </select>
+        </label>
+        <label class="field check"><input id="collapseDuplicates" type="checkbox"> <span>合并相同帖子</span></label>
+        <label class="field check"><input id="untaggedOnly" type="checkbox"> <span>仅无标签帖子</span></label>
+      </section>
+
+      <section class="tagbar" aria-label="标签筛选">
+        <span class="u-mono">TAGS</span>
+        <div id="tagBar" class="tagbar-chips"></div>
+      </section>
+
+      <div class="saved-view-bar">
+        <span class="u-mono">SAVED VIEW</span>
+        <select id="savedViewSelect" aria-label="已保存视图"><option value="">选择视图</option></select>
+        <button id="saveView" class="ghost" type="button">＋ 保存当前视图</button>
+        <button id="deleteView" class="ghost" type="button" disabled>删除</button>
+      </div>
+
+      <div class="section-head">
+        <span id="resultCount">0 条帖子</span>
+        <div class="io-actions">
+          <button class="ghost" id="exportButton" type="button">↓ JSON 备份</button>
+          <button class="ghost" id="exportCsvButton" type="button">↓ CSV</button>
+          <button class="ghost" id="importButton" type="button">↑ 导入</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden>
+        </div>
+      </div>
+
+      <div class="selection-bar">
+        <label><input id="selectVisible" type="checkbox"> 全选当前结果</label>
+        <span id="selectionCount">已选 0 项</span>
+        <button id="clearSelection" class="ghost" type="button" disabled>取消选择</button>
+        <button id="bulkEdit" class="ghost" type="button" disabled>批量整理标签·阅读状态</button>
+        <button id="deleteSelected" class="ghost danger" type="button" disabled>删除所选</button>
+        <button id="shareSelected" class="primary" type="button" disabled>分享所选帖子 ↗</button>
+      </div>
+
+      <div id="scanProgress" class="scan-progress" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="scanProgressText">正在导入</span>
+        <button id="pauseScan" class="ghost" type="button">停止</button>
+      </div>
+
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <div id="cards" class="cards"></div>
+
+      <section class="history">
+        <h2 class="u-mono">RECENT IMPORTS</h2>
+        <div id="history"></div>
+      </section>
+    </div>
+
+    <section id="peoplePanel" class="feature-panel" hidden>
+      <div class="panel-heading">
+        <div>
+          <h2>人物·小号</h2>
+          <p>为他人的账号添加别名和备注，方便辨认。关联需手动指定，且仅保存在此设备。</p>
+        </div>
+      </div>
+      <form id="personForm" class="feature-form">
+        <label>X 账号<input id="personHandle" type="text" placeholder="@username" required maxlength="16"></label>
+        <label>是谁（别名）<input id="personLabel" type="text" placeholder="例如：游戏好友" maxlength="80"></label>
+        <label>关联的其他账号<input id="personMatch" type="text" placeholder="@其他账号（仅限已亲自确认）" maxlength="16"></label>
+        <label>备注<input id="personNote" type="text" placeholder="辨认线索" maxlength="500"></label>
+        <label class="check"><input id="personPrivate" type="checkbox"> 标记为私密账号</label>
+        <button class="primary" type="submit">保存</button>
+      </form>
+      <p id="personNotice" class="notice" hidden></p>
+      <label class="people-search">搜索账号<input id="personSearch" type="search" placeholder="搜索别名、@账号、备注"></label>
+      <div id="peopleList" class="people-list"></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="scanDialog">
+  <form method="dialog">
+    <div class="dialog-icon">↻</div>
+    <h2>从 X 导入</h2>
+    <p id="pageHint">将自动确认已登录的 X 账号。</p>
+    <p id="accountHint" class="account-hint">账号确认将在开始导入时进行。</p>
+    <label>收藏类型<select id="collection"><option value="bookmark">书签</option><option value="like">喜欢</option></select></label>
+    <label>读取方法<select id="scanSource"><option value="web">X 网页同步（推荐）</option><option value="screen">滚动页面读取（备用）</option></select></label>
+    <label>模式<select id="scanMode"><option value="full">从头扫描</option><option value="incremental">仅快速扫描新帖</option></select></label>
+    <label>读取范围<select id="rounds">
+      <option value="0">首屏·首页</option>
+      <option value="5">再读取 5 步</option>
+      <option value="15">再读取 15 步</option>
+      <option value="30" selected>再读取 30 步</option>
+      <option value="100">再读取 100 步</option>
+      <option value="300">最多 300 步</option>
+    </select></label>
+    <p class="fine">网页同步使用当前 X 登录会话读取帖子。Cookie 和认证令牌不会保存到收藏库，也不会更改 X 账号中的帖子或书签。</p>
+    <div class="dialog-actions">
+      <button value="cancel" formnovalidate>取消</button>
+      <button id="startScan" value="scan" class="primary">开始导入</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tagDialog">
+  <form method="dialog">
+    <div class="dialog-icon">◇</div>
+    <h2>整理帖子</h2>
+    <p id="tagPost"></p>
+    <label>备注<textarea id="noteInput" placeholder="简短记录保存的原因" maxlength="2000" rows="3"></textarea></label>
+    <label>标签<div id="tagChips" class="tag-chips"></div>
+      <input id="tagInput" type="text" placeholder="输入标签后按空格或逗号" maxlength="40" autocomplete="off">
+    </label>
+    <div id="tagSuggest" class="tag-suggest"></div>
+    <p class="fine">按空格、逗号或 Enter 添加标签，点 × 删除。也可以点击下方的推荐标签直接添加。</p>
+    <div class="dialog-actions">
+      <button value="cancel">取消</button>
+      <button value="save" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="shareDialog">
+  <div class="dialog-icon">↗</div>
+  <h2>分享所选帖子</h2>
+  <p id="shareSummary">这是所选帖子的地址。</p>
+  <label>分享格式<select id="shareFormat">
+    <option value="links">仅链接</option>
+    <option value="details">作者 · 帖子内容 · 链接</option>
+    <option value="markdown">Markdown 列表</option>
+  </select></label>
+  <label>预览<textarea id="shareLinks" rows="10" readonly></textarea></label>
+  <div class="dialog-actions">
+    <button id="closeShare" type="button">关闭</button>
+    <button id="copyShare" type="button" class="primary">复制</button>
+  </div>
+  <p id="shareFeedback" class="share-feedback" role="status"></p>
+</dialog>
+
+<dialog id="bulkDialog">
+  <div class="dialog-icon">▣</div>
+  <h2>批量整理所选帖子</h2>
+  <p id="bulkSummary"></p>
+  <label>要添加的标签<div id="bulkTagChips" class="tag-chips"></div>
+    <input id="bulkTagInput" type="text" maxlength="40" placeholder="输入标签后按空格或逗号">
+  </label>
+  <label>阅读状态<select id="bulkReading">
+    <option value="keep">不更改</option>
+    <option value="later">稍后阅读</option>
+    <option value="read">已读</option>
+    <option value="none">清除状态</option>
+  </select></label>
+  <div class="dialog-actions">
+    <button id="cancelBulk" type="button">取消</button>
+    <button id="applyBulk" type="button" class="primary">应用到所选帖子</button>
+  </div>
+</dialog>
+
+<dialog id="viewDialog">
+  <div class="dialog-icon">⌑</div>
+  <h2>保存当前视图</h2>
+  <p>将搜索词和筛选组合保存到此设备。</p>
+  <label>视图名称<input id="viewName" type="text" maxlength="50" placeholder="例如：稍后阅读的设计帖子"></label>
+  <div class="dialog-actions">
+    <button id="cancelView" type="button">取消</button>
+    <button id="confirmView" type="button" class="primary">保存</button>
+  </div>
+</dialog>
+
+<dialog id="tagManagerDialog">
+  <div class="dialog-icon">◇</div>
+  <h2>标签管理</h2>
+  <p>重命名标签或指定颜色后，将应用到所有帖子。</p>
+  <div id="tagManagerList" class="tag-manager"></div>
+  <div class="dialog-actions">
+    <button id="closeTagManager" type="button">关闭</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog">
+  <div class="dialog-icon" id="confirmIcon">！</div>
+  <h2 id="confirmTitle">确认</h2>
+  <p id="confirmText"></p>
+  <div class="dialog-actions">
+    <button id="confirmCancel" type="button">取消</button>
+    <button id="confirmOk" type="button" class="primary danger-solid">删除</button>
+  </div>
+</dialog>
+
+<script src="db.js"></script>
+<script src="xsync.js"></script>
+<script src="library.js"></script>
+<script src="people.js"></script>
+</body>
+</html>
