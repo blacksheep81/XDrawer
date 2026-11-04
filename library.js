@@ -71,7 +71,7 @@ function localDay(iso) {
 
 /* 검색어를 일반 단어, 제외 단어, from:/tag:/has:/is: 조건으로 나눈다. */
 function parseQuery(query) {
-  const parsed = { include:[], exclude:[], from:[], notFrom:[], tag:[], notTag:[], has:[], is:[] };
+  const parsed = { include:[], exclude:[], from:[], notFrom:[], tag:[], notTag:[], has:[], notHas:[], is:[], notIs:[] };
   const pattern = /(-?)(?:(from|tag|has|is)[:：])?(?:["“]([^"”]*)["”]|(\S+))/gi;
   for (const match of String(query || '').matchAll(pattern)) {
     const negate = match[1] === '-';
@@ -80,11 +80,29 @@ function parseQuery(query) {
     if (!value) continue;
     if (field === 'from') (negate ? parsed.notFrom : parsed.from).push(value.replace(/^@/, ''));
     else if (field === 'tag') (negate ? parsed.notTag : parsed.tag).push(value.replace(/^#/, ''));
-    else if (field === 'has') parsed.has.push(value);
-    else if (field === 'is') parsed.is.push(value);
+    else if (field === 'has') (negate ? parsed.notHas : parsed.has).push(value);
+    else if (field === 'is') (negate ? parsed.notIs : parsed.is).push(value);
     else (negate ? parsed.exclude : parsed.include).push(value);
   }
   return parsed;
+}
+
+/* 알 수 없는 조건은 null을 돌려준다: 긍정 조건에서는 통과, 부정 조건에서는 무시한다. */
+function hasFlag(item, flag) {
+  if (flag === 'image') return item.media === 'image';
+  if (flag === 'video') return item.media === 'video';
+  if (flag === 'media') return item.media !== 'text';
+  if (flag === 'link') return !!(item.links || []).length;
+  if (flag === 'note') return !!item.note;
+  if (flag === 'tag') return !!(item.tags || []).length;
+  return null;
+}
+function isState(item, state) {
+  const reading = item.readingState || 'none';
+  if (state === 'read') return reading === 'read';
+  if (state === 'later') return reading === 'later';
+  if (state === 'unread') return reading !== 'read';
+  return null;
 }
 
 function matchesQuery(item, parsed) {
@@ -97,20 +115,10 @@ function matchesQuery(item, parsed) {
   const tags = (item.tags || []).map(tag => tag.toLocaleLowerCase());
   if (!parsed.tag.every(term => tags.some(tag => tag.includes(term)))) return false;
   if (parsed.notTag.some(term => tags.some(tag => tag.includes(term)))) return false;
-  for (const flag of parsed.has) {
-    if (flag === 'image' && item.media !== 'image') return false;
-    if (flag === 'video' && item.media !== 'video') return false;
-    if (flag === 'media' && item.media === 'text') return false;
-    if (flag === 'link' && !(item.links || []).length) return false;
-    if (flag === 'note' && !item.note) return false;
-    if (flag === 'tag' && !(item.tags || []).length) return false;
-  }
-  for (const state of parsed.is) {
-    const reading = item.readingState || 'none';
-    if (state === 'read' && reading !== 'read') return false;
-    if (state === 'later' && reading !== 'later') return false;
-    if (state === 'unread' && reading === 'read') return false;
-  }
+  if (!parsed.has.every(flag => hasFlag(item, flag))) return false;
+  if (parsed.notHas.some(flag => hasFlag(item, flag) === true)) return false;
+  if (!parsed.is.every(state => isState(item, state))) return false;
+  if (parsed.notIs.some(state => isState(item, state) === true)) return false;
   return true;
 }
 
@@ -977,17 +985,19 @@ function downloadFile(name, blob) {
 
 $('#exportButton').addEventListener('click', async () => {
   try {
+    // 화면 메모리가 아니라 DB를 다시 읽어, 페이지를 연 뒤 저장된 글도 백업에 포함한다.
+    const allPosts = await getAll('posts');
     const payload = {
       format:'x-drawer-backup',
       version:6,
       exportedAt:new Date().toISOString(),
-      posts,
+      posts:allPosts,
       people:await getAll('people'),
       savedViews:await getAll('savedViews'),
       tags:await getAll('tags')
     };
     downloadFile(`x-drawer-${localDay(new Date().toISOString())}.json`, new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
-    notice(`已将 ${posts.length.toLocaleString('zh-CN')} 条帖子导出为 JSON 备份。`);
+    notice(`已将 ${allPosts.length.toLocaleString('zh-CN')} 条帖子导出为 JSON 备份。`);
   } catch (error) { notice(`导出失败：${error.message}`, true); }
 });
 
@@ -1083,7 +1093,12 @@ $('#importFile').addEventListener('change', async event => {
       const store = tx.objectStore('tags');
       for (const entry of validTags) {
         const request = store.get(entry.name);
-        request.onsuccess = () => { if (!request.result) store.put(entry); };
+        request.onsuccess = () => {
+          const existing = request.result;
+          // 글을 가져오면서 색 없이 먼저 만들어진 태그에도 백업의 색을 채운다. 사용자가 정한 색은 유지한다.
+          if (!existing) store.put(entry);
+          else if (!existing.color && entry.color) store.put({ ...existing, color:entry.color, createdAt:existing.createdAt || entry.createdAt });
+        };
       }
     });
 
