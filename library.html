@@ -196,6 +196,7 @@
         <span id="selectionCount">已选 0 项</span>
         <button id="clearSelection" class="ghost" type="button" disabled>取消选择</button>
         <button id="bulkEdit" class="ghost" type="button" disabled>批量整理</button>
+        <button id="moveSelected" class="ghost" type="button" disabled>移到分类</button>
         <button id="deleteSelected" class="ghost danger" type="button" disabled>删除所选</button>
         <button id="shareSelected" class="primary" type="button" disabled>分享所选帖子</button>
       </div>
@@ -302,6 +303,19 @@
   <div class="dialog-actions">
     <button id="cancelBulk" type="button">取消</button>
     <button id="applyBulk" type="button" class="primary">应用到所选帖子</button>
+  </div>
+</dialog>
+
+<dialog id="moveDialog">
+  <h2>移到分类</h2>
+  <p id="moveSummary"></p>
+  <div id="moveOptions" class="move-options" role="radiogroup" aria-label="目标分类"></div>
+  <input id="moveNewName" type="text" maxlength="40" placeholder="新分类名称，例如：稍后研究" hidden>
+  <p class="fine">手动加入的帖子会一直留在这个分类里，不受关键词条件影响；从分类移出的帖子即使符合条件也不会再出现。</p>
+  <p id="moveError" class="error-text" role="alert"></p>
+  <div class="dialog-actions">
+    <button id="cancelMove" type="button">取消</button>
+    <button id="applyMove" type="button" class="primary">移动</button>
   </div>
 </dialog>
 

@@ -1,7 +1,7 @@
 const $ = selector => document.querySelector(selector);
 
 let posts = [], history = [], people = [], tagMeta = [], savedViews = [], smartRules = [];
-let activeRuleId = '', authorExpanded = false;
+let activeRuleId = '', authorExpanded = false, unsortedOnly = false;
 let view = 'all', activeTab = null, editingTagKey = null, scanPaused = false;
 let editingTags = [], bulkTags = [];
 const activeTags = new Set();
@@ -204,7 +204,7 @@ function updateSelection() {
   $('#selectionCount').textContent = `已选 ${selectedKeys.size} 项`;
   const none = selectedKeys.size === 0;
   $('#selectionBar').hidden = none;
-  $('#clearSelection').disabled = $('#shareSelected').disabled = $('#bulkEdit').disabled = $('#deleteSelected').disabled = none;
+  $('#clearSelection').disabled = $('#shareSelected').disabled = $('#bulkEdit').disabled = $('#moveSelected').disabled = $('#deleteSelected').disabled = none;
 }
 
 function currentViewSettings() {
@@ -213,7 +213,7 @@ function currentViewSettings() {
     account:$('#accountFilter').value, author:$('#authorFilter').value,
     tags:[...activeTags], reading:$('#readFilter').value, link:$('#linkFilter').value,
     from:$('#fromDate').value, to:$('#toDate').value, preset:$('#datePreset').value,
-    layout:$('#layout').value, collapse:$('#collapseDuplicates').checked, untagged:$('#untaggedOnly').checked
+    layout:$('#layout').value, collapse:$('#collapseDuplicates').checked, untagged:$('#untaggedOnly').checked, unsorted:unsortedOnly
   };
 }
 
@@ -244,6 +244,7 @@ function applyViewSettings(settings) {
   }
   $('#collapseDuplicates').checked = !!settings.collapse;
   $('#untaggedOnly').checked = !!settings.untagged;
+  unsortedOnly = !!settings.unsorted;
   render();
 }
 
@@ -281,7 +282,9 @@ function filteredPosts(parsed) {
   const from = $('#fromDate').value, to = $('#toDate').value;
   const untaggedOnly = $('#untaggedOnly').checked;
   const rule = activeRule();
+  const sorted = unsortedOnly ? categorizedIds() : null;
   return posts.filter(item => {
+    if (sorted && ((item.tags || []).length || sorted.has(item.id))) return false;
     if (view !== 'all' && item.collection !== view) return false;
     if (rule && !ruleMatches(rule, item, ruleTextOf(item))) return false;
     if (account !== 'all' && (item.account || 'legacy') !== account) return false;
@@ -322,6 +325,7 @@ function activeFilterCount() {
   for (const id of ['#media','#accountFilter','#authorFilter','#readFilter','#linkFilter']) if ($(id).value !== 'all') count++;
   if ($('#fromDate').value || $('#toDate').value) count++;
   if ($('#untaggedOnly').checked) count++;
+  if (unsortedOnly) count++;
   count += activeTags.size;
   if ($('#search').value.trim()) count++;
   return count;
@@ -529,13 +533,25 @@ function rulePosts(rule) {
   if (smartRules.includes(rule)) rulePostsCache.set(rule.id, { posts, rule, list });
   return list;
 }
+/* 하나 이상의 智能分类에 들어간 글 ID. posts와 규칙이 그대로인 동안 재사용한다. */
+let categorizedCache = null;
+function categorizedIds() {
+  if (categorizedCache?.posts === posts && categorizedCache.rules === smartRules) return categorizedCache.ids;
+  const ids = new Set();
+  for (const rule of smartRules) for (const item of rulePosts(rule)) ids.add(item.id);
+  categorizedCache = { posts, rules:smartRules, ids };
+  return ids;
+}
 function describeRule(rule) {
   const parts = [];
+  if (rule.folder) parts.push('手动分类');
   if (rule.keywords.length) parts.push(`${rule.match === 'all' ? '包含全部' : '包含任一'}：${rule.keywords.join('、')}`);
   if (rule.authors.length) parts.push(`作者：${rule.authors.map(handle => '@' + handle).join('、')}`);
   if (rule.exclude.length) parts.push(`排除：${rule.exclude.join('、')}`);
   const filters = ruleFilterText(rule);
   if (filters) parts.push(`条件：${filters}`);
+  if (rule.includeIds?.length) parts.push(`手动加入 ${rule.includeIds.length} 条`);
+  if (rule.excludeIds?.length) parts.push(`手动移出 ${rule.excludeIds.length} 条`);
   if (rule.tag) parts.push(`自动添加标签「${rule.tag}」`);
   return parts.join(' · ');
 }
@@ -570,10 +586,11 @@ function renderRail() {
   // 모음·작성자·저장 계정·정리 항목 수를 한 번에 센다.
   const authorCounts = new Map(), accountCounts = new Map();
   const collectionCounts = { bookmark:0, like:0, saved:0 };
-  let untagged = 0, later = 0;
+  let unsorted = 0, later = 0;
+  const sorted = categorizedIds();
   for (const item of posts) {
     if (item.collection in collectionCounts) collectionCounts[item.collection]++;
-    if (!(item.tags || []).length) untagged++;
+    if (!(item.tags || []).length && !sorted.has(item.id)) unsorted++;
     if (item.readingState === 'later') later++;
     if (item.username) {
       const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
@@ -590,7 +607,7 @@ function renderRail() {
   $('#bookmarkCount').textContent = collectionCounts.bookmark;
   $('#likeCount').textContent = collectionCounts.like;
   $('#savedCount').textContent = collectionCounts.saved;
-  $('#todoList').innerHTML = railItem('todo', 'untagged', '待整理', untagged, '还没有任何标签的帖子')
+  $('#todoList').innerHTML = railItem('todo', 'unsorted', '待整理', unsorted, '没有标签、也不在任何智能分类里的帖子')
     + railItem('todo', 'later', '稍后读', later, '标记为稍后读的帖子');
   const authors = [...authorCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
   const limit = authorExpanded ? 40 : 8;
@@ -610,7 +627,7 @@ function updateRailActive() {
   document.querySelectorAll('.rail-item').forEach(item => {
     const { kind, value } = item.dataset;
     const on = kind === 'rule' ? value === activeRuleId
-      : kind === 'todo' ? (value === 'untagged' ? $('#untaggedOnly').checked : $('#readFilter').value === 'later')
+      : kind === 'todo' ? (value === 'unsorted' ? unsortedOnly : $('#readFilter').value === 'later')
       : kind === 'author' ? value === author : value === account;
     item.classList.toggle('active', on);
     item.setAttribute('aria-pressed', String(on));
@@ -627,7 +644,7 @@ document.querySelector('.rail-groups').addEventListener('click', event => {
     activeRuleId = activeRuleId === value ? '' : value;
     if (activeRuleId) view = 'all';
   } else if (kind === 'todo') {
-    if (value === 'untagged') $('#untaggedOnly').checked = !$('#untaggedOnly').checked;
+    if (value === 'unsorted') unsortedOnly = !unsortedOnly;
     else $('#readFilter').value = $('#readFilter').value === 'later' ? 'all' : 'later';
   } else {
     const select = $(kind === 'author' ? '#authorFilter' : '#accountFilter');
@@ -639,6 +656,7 @@ $('#authorMore').addEventListener('click', () => { authorExpanded = !authorExpan
 
 /* 규칙 편집 대화상자 */
 let editingRuleId = '';
+const editingRule = () => smartRules.find(rule => rule.id === editingRuleId) || null;
 function ruleFromForm() {
   return {
     id: editingRuleId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
@@ -649,7 +667,9 @@ function ruleFromForm() {
     authors: $('#ruleAuthors').value,
     ...parseRuleFilters($('#ruleFilters').value),
     tag: $('#ruleTag').value,
-    createdAt: smartRules.find(rule => rule.id === editingRuleId)?.createdAt
+    // 손으로 넣고 뺀 글은 대화상자에 칸이 없으므로 기존 규칙에서 그대로 가져온다.
+    folder: !!editingRule()?.folder, includeIds: editingRule()?.includeIds || [], excludeIds: editingRule()?.excludeIds || [],
+    createdAt: editingRule()?.createdAt
   };
 }
 /* "附加条件" 칸을 읽는다. 규칙이 저장할 수 없는 조건이 있으면 오류로 알려 준다. */
@@ -842,6 +862,7 @@ $('#resetFilters').addEventListener('click', () => {
   $('#fromDate').value = $('#toDate').value = '';
   $('#datePreset').value = 'all';
   $('#untaggedOnly').checked = false;
+  unsortedOnly = false;
   activeTags.clear();
   render();
 });
@@ -943,6 +964,85 @@ $('#applyBulk').addEventListener('click', async () => {
   $('#bulkDialog').close();
   await refresh();
   notice(`已整理 ${count} 个保存项。`);
+});
+
+/* ── 분류로 옮기기 ───────────────────────────
+   고른 분류의 includeIds에 글을 넣고, 지금 보고 있는 분류에서 왔다면 그 분류의 excludeIds에 넣어 빼낸다. */
+function selectedPostIds() { return [...new Set(posts.filter(item => selectedKeys.has(item.key)).map(item => String(item.id)))]; }
+function renderMoveOptions() {
+  const from = activeRule();
+  const options = [...smartRules].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')).filter(rule => rule.id !== from?.id)
+    .map(rule => `<label class="check move-option"><input type="radio" name="moveTarget" value="${escapeHTML(rule.id)}"> <span>${escapeHTML(rule.name)}</span><b>${rulePosts(rule).length.toLocaleString('zh-CN')}</b></label>`);
+  options.push(`<label class="check move-option"><input type="radio" name="moveTarget" value="__new"> <span>新建分类…</span></label>`);
+  if (from) options.push(`<label class="check move-option"><input type="radio" name="moveTarget" value="__out"> <span>只移出「${escapeHTML(from.name)}」</span></label>`);
+  $('#moveOptions').innerHTML = options.join('');
+}
+$('#moveSelected').addEventListener('click', () => {
+  const from = activeRule();
+  const count = selectedPostIds().length;
+  const what = count === selectedKeys.size ? `所选 ${count} 条帖子` : `所选 ${count} 条帖子（${selectedKeys.size} 个保存项）`;
+  $('#moveSummary').textContent = from
+    ? `将${what}从「${from.name}」移到另一个分类。`
+    : `将${what}加入一个分类。帖子仍会保留在“全部收藏”和原来的书签、喜欢中。`;
+  renderMoveOptions();
+  $('#moveNewName').value = '';
+  $('#moveNewName').hidden = true;
+  $('#moveError').textContent = '';
+  $('#moveDialog').showModal();
+});
+$('#moveOptions').addEventListener('change', () => {
+  const isNew = document.querySelector('input[name="moveTarget"]:checked')?.value === '__new';
+  $('#moveNewName').hidden = !isNew;
+  if (isNew) $('#moveNewName').focus();
+});
+$('#cancelMove').addEventListener('click', () => $('#moveDialog').close());
+$('#applyMove').addEventListener('click', async () => {
+  const choice = document.querySelector('input[name="moveTarget"]:checked')?.value;
+  if (!choice) { $('#moveError').textContent = '请选择一个分类。'; return; }
+  const ids = selectedPostIds();
+  const from = activeRule();
+  const previous = [];
+  const changed = [];
+  let target = null, created = false;
+  try {
+    if (choice === '__new') {
+      const name = $('#moveNewName').value.trim();
+      if (!name) { $('#moveError').textContent = '请填写新分类的名称。'; return; }
+      if (smartRules.length >= RULE_LIMIT) { $('#moveError').textContent = `最多可以创建 ${RULE_LIMIT} 个智能分类。`; return; }
+      target = normalizeRule({ id:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`, name, folder:true, includeIds:ids });
+      created = true;
+    } else if (choice !== '__out') {
+      const rule = smartRules.find(item => item.id === choice);
+      if (!rule) return;
+      previous.push(rule);
+      target = normalizeRule({ ...rule, includeIds:[...rule.includeIds, ...ids], excludeIds:rule.excludeIds.filter(postId => !ids.includes(postId)) });
+      if (target.includeIds.length < new Set([...rule.includeIds, ...ids]).size) { $('#moveError').textContent = `每个分类最多手动加入 ${RULE_ID_LIMIT} 条帖子。`; return; }
+    }
+    if (target) changed.push(target);
+    if (from && from.id !== target?.id) {
+      previous.push(from);
+      changed.push(normalizeRule({ ...from, includeIds:from.includeIds.filter(postId => !ids.includes(postId)), excludeIds:[...from.excludeIds, ...ids] }));
+    }
+    for (const rule of changed) await putRule(rule);
+    // 옮긴 분류에 자동 태그가 있으면 옮긴 글에도 붙인다.
+    const tagged = target?.tag ? await applyRuleToPosts(target, posts.filter(item => ids.includes(String(item.id))).map(item => item.key)) : null;
+    $('#moveDialog').close();
+    selectedKeys.clear();
+    await refresh();
+    const label = target ? `已将 ${ids.length} 条帖子${from ? '移到' : '加入'}「${target.name}」` : `已将 ${ids.length} 条帖子移出「${from.name}」`;
+    notice(`${label}${tagged?.added.length ? `，并添加了「${target.tag}」标签` : ''}。`, false, {
+      label:'撤销',
+      run: async () => {
+        try {
+          if (tagged) await undoRuleApply(ruleMark(target), target.tag, tagged.marked, tagged.added);
+          if (created) await deleteRule(target.id);
+          for (const rule of previous) await putRule(rule);
+          await refresh();
+          notice('已撤销这次移动。');
+        } catch (error) { notice(`撤销失败：${error.message}`, true); }
+      }
+    });
+  } catch (error) { $('#moveError').textContent = `移动失败：${error.message}`; }
 });
 
 $('#deleteSelected').addEventListener('click', async () => {

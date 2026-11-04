@@ -105,6 +105,15 @@ function ruleHasFlag(item, flag) {
   return !!(item.links || []).length;
 }
 const RULE_TAG_LIMIT = 20;
+/* 손으로 넣거나 뺀 글은 계정·모음과 상관없이 같은 글이 함께 움직이도록 글 ID로 기억한다. */
+const RULE_ID_LIMIT = 5000;
+function ruleIds(value) { return [...new Set((Array.isArray(value) ? value : []).map(String).filter(postId => /^[A-Za-z0-9_-]{1,40}$/.test(postId)))].slice(0, RULE_ID_LIMIT); }
+const ruleIdSets = new WeakMap();
+function ruleIdSet(rule) {
+  let sets = ruleIdSets.get(rule);
+  if (!sets) { sets = { include:new Set(rule.includeIds || []), exclude:new Set(rule.excludeIds || []) }; ruleIdSets.set(rule, sets); }
+  return sets;
+}
 const sameTags = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((tag, index) => tag === b[index]);
 /* 태그를 바꿀 때마다 tagRev를 올린다. 되돌리기는 이 값으로 "적용 뒤 태그를 손댔는지"를 판단한다.
    (지웠다가 같은 이름을 다시 붙여도 값이 두 번 올라가므로 구별된다.) */
@@ -120,9 +129,12 @@ function normalizeRule(raw) {
   const handles = value => splitTerms(Array.isArray(value) ? value : String(value || '').split(/[\s,，、;；]+/)).map(handle => handle.replace(/^@/, '')).filter(handle => /^[a-z0-9_]{1,15}$/.test(handle));
   const authors = handles(raw.authors);
   const has = ruleFlags(raw.has);
-  if (!keywords.length && !authors.length && !has.length) throw new Error('请至少填写一个关键词、作者或 has: 条件。');
+  const includeIds = ruleIds(raw.includeIds), excludeIds = ruleIds(raw.excludeIds).filter(postId => !includeIds.includes(postId));
+  // folder는 조건 없이 손으로 넣은 글만 담는 분류다. 글을 모두 빼도 분류는 남는다.
+  const folder = raw.folder === true && !keywords.length && !authors.length && !has.length;
+  if (!folder && !keywords.length && !authors.length && !has.length) throw new Error('请至少填写一个关键词、作者或 has: 条件。');
   return {
-    id, name, keywords, authors, has,
+    id, name, keywords, authors, has, folder, includeIds, excludeIds,
     notHas: ruleFlags(raw.notHas),
     notAuthors: handles(raw.notAuthors),
     match: raw.match === 'all' ? 'all' : 'any',
@@ -135,6 +147,10 @@ function ruleText(item) {
   return [item.text, item.note, item.author, item.username, item.url, ...(item.links || [])].join(' ').toLocaleLowerCase();
 }
 function ruleMatches(rule, item, text = ruleText(item)) {
+  const ids = ruleIdSet(rule), postId = String(item.id);
+  if (ids.exclude.has(postId)) return false;
+  if (ids.include.has(postId)) return true;
+  if (rule.folder) return false;
   const username = String(item.username || '').toLowerCase();
   if (rule.authors.length && !rule.authors.includes(username)) return false;
   if ((rule.notAuthors || []).includes(username)) return false;
