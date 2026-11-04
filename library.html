@@ -27,6 +27,10 @@
     </nav>
 
     <div class="rail-groups">
+      <section class="rail-group" aria-labelledby="todoGroupTitle">
+        <div class="rail-group-head"><h2 id="todoGroupTitle">整理</h2></div>
+        <div id="todoList" class="rail-list"></div>
+      </section>
       <section class="rail-group" aria-labelledby="ruleGroupTitle">
         <div class="rail-group-head">
           <h2 id="ruleGroupTitle">智能分类</h2>
@@ -168,9 +172,12 @@
           <span id="resultCount">0 条帖子</span>
         </div>
         <div class="io-actions">
-          <button class="ghost" id="exportButton" type="button">导出 JSON 备份</button>
-          <button class="ghost" id="exportCsvButton" type="button">导出 CSV</button>
-          <button class="ghost" id="importButton" type="button">导入备份</button>
+          <button class="ghost" id="ioMenuButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="ioMenu">备份与导出 ▾</button>
+          <div id="ioMenu" class="io-menu" role="menu" hidden>
+            <button id="exportButton" type="button" role="menuitem">导出 JSON 备份<small>包含标签、备注和智能分类，可再次导入</small></button>
+            <button id="exportCsvButton" type="button" role="menuitem">导出 CSV<small>用表格软件查看当前筛选结果</small></button>
+            <button id="importButton" type="button" role="menuitem">导入备份<small>从 JSON 备份恢复，已有帖子会合并</small></button>
+          </div>
           <input id="importFile" type="file" accept="application/json,.json" hidden>
         </div>
       </div>

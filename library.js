@@ -187,6 +187,7 @@ async function refresh() {
   people = await getAll('people');
   tagMeta = await getAll('tags');
   smartRules = await getRules();
+  rulePostsCache.clear();
   if (activeRuleId && !smartRules.some(rule => rule.id === activeRuleId)) activeRuleId = '';
   tagColors = new Map(tagMeta.map(meta => [meta.name, safeColor(meta.color)]));
   renderSourceFilters();
@@ -404,10 +405,6 @@ function render() {
   $('#subtitle').textContent = rule ? describeRule(rule) : subtitles[view];
   $('#editRule').hidden = !rule;
   updateApplyRuleButton(rule);
-  $('#allCount').textContent = posts.length;
-  $('#bookmarkCount').textContent = posts.filter(item => item.collection === 'bookmark').length;
-  $('#likeCount').textContent = posts.filter(item => item.collection === 'like').length;
-  $('#savedCount').textContent = posts.filter(item => item.collection === 'saved').length;
   $('#peopleCount').textContent = people.length;
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', !rule && button.dataset.view === view));
   updateRailActive();
@@ -522,7 +519,16 @@ function ruleTextOf(item) {
   return text;
 }
 function activeRule() { return activeRuleId ? smartRules.find(rule => rule.id === activeRuleId) || null : null; }
-function rulePosts(rule) { return posts.filter(item => ruleMatches(rule, item, ruleTextOf(item))); }
+/* 규칙별 결과를 posts 배열과 규칙 객체가 그대로인 동안 재사용한다. refresh()가 둘 중 하나를 새로 만들면 자연히 다시 계산된다. */
+const rulePostsCache = new Map();
+function rulePosts(rule) {
+  const cached = rulePostsCache.get(rule.id);
+  if (cached && cached.posts === posts && cached.rule === rule) return cached.list;
+  const list = posts.filter(item => ruleMatches(rule, item, ruleTextOf(item)));
+  // 대화상자 미리보기용 임시 규칙은 담아 두지 않는다.
+  if (smartRules.includes(rule)) rulePostsCache.set(rule.id, { posts, rule, list });
+  return list;
+}
 function describeRule(rule) {
   const parts = [];
   if (rule.keywords.length) parts.push(`${rule.match === 'all' ? '包含全部' : '包含任一'}：${rule.keywords.join('、')}`);
@@ -561,13 +567,31 @@ function renderRail() {
     ? [...smartRules].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')).map(rule => railItem('rule', rule.id, rule.name, rulePosts(rule).length, describeRule(rule))).join('')
     : '<p class="rail-empty">按关键词或作者自动归类。<button type="button" data-action="new-rule">新建分类</button></p>';
 
-  const authorCounts = new Map();
+  // 모음·작성자·저장 계정·정리 항목 수를 한 번에 센다.
+  const authorCounts = new Map(), accountCounts = new Map();
+  const collectionCounts = { bookmark:0, like:0, saved:0 };
+  let untagged = 0, later = 0;
   for (const item of posts) {
-    if (!item.username) continue;
-    const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
-    entry.count++;
-    authorCounts.set(item.username, entry);
+    if (item.collection in collectionCounts) collectionCounts[item.collection]++;
+    if (!(item.tags || []).length) untagged++;
+    if (item.readingState === 'later') later++;
+    if (item.username) {
+      const entry = authorCounts.get(item.username) || { count:0, name:item.author || item.username };
+      entry.count++;
+      authorCounts.set(item.username, entry);
+    }
+    const account = item.account || 'legacy';
+    const accountEntry = accountCounts.get(account) || { count:0, name:account };
+    accountEntry.count++;
+    if (item.accountName) accountEntry.name = item.accountName;
+    accountCounts.set(account, accountEntry);
   }
+  $('#allCount').textContent = posts.length;
+  $('#bookmarkCount').textContent = collectionCounts.bookmark;
+  $('#likeCount').textContent = collectionCounts.like;
+  $('#savedCount').textContent = collectionCounts.saved;
+  $('#todoList').innerHTML = railItem('todo', 'untagged', '待整理', untagged, '还没有任何标签的帖子')
+    + railItem('todo', 'later', '稍后读', later, '标记为稍后读的帖子');
   const authors = [...authorCounts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
   const limit = authorExpanded ? 40 : 8;
   $('#authorGroup').hidden = !authors.length;
@@ -576,14 +600,6 @@ function renderRail() {
   $('#authorMore').textContent = authorExpanded ? '收起' : `更多 ${Math.min(authors.length, 40) - 8}`;
   $('#authorMore').setAttribute('aria-expanded', String(authorExpanded));
 
-  const accountCounts = new Map();
-  for (const item of posts) {
-    const account = item.account || 'legacy';
-    const entry = accountCounts.get(account) || { count:0, name:account };
-    entry.count++;
-    if (item.accountName) entry.name = item.accountName;
-    accountCounts.set(account, entry);
-  }
   $('#accountGroup').hidden = accountCounts.size < 2;
   $('#accountList').innerHTML = [...accountCounts.entries()].sort((a, b) => b[1].count - a[1].count)
     .map(([account, entry]) => railItem('account', account, '@' + entry.name, entry.count)).join('');
@@ -593,7 +609,9 @@ function updateRailActive() {
   const author = $('#authorFilter').value, account = $('#accountFilter').value;
   document.querySelectorAll('.rail-item').forEach(item => {
     const { kind, value } = item.dataset;
-    const on = kind === 'rule' ? value === activeRuleId : kind === 'author' ? value === author : value === account;
+    const on = kind === 'rule' ? value === activeRuleId
+      : kind === 'todo' ? (value === 'untagged' ? $('#untaggedOnly').checked : $('#readFilter').value === 'later')
+      : kind === 'author' ? value === author : value === account;
     item.classList.toggle('active', on);
     item.setAttribute('aria-pressed', String(on));
   });
@@ -608,6 +626,9 @@ document.querySelector('.rail-groups').addEventListener('click', event => {
   if (kind === 'rule') {
     activeRuleId = activeRuleId === value ? '' : value;
     if (activeRuleId) view = 'all';
+  } else if (kind === 'todo') {
+    if (value === 'untagged') $('#untaggedOnly').checked = !$('#untaggedOnly').checked;
+    else $('#readFilter').value = $('#readFilter').value === 'later' ? 'all' : 'later';
   } else {
     const select = $(kind === 'author' ? '#authorFilter' : '#accountFilter');
     select.value = select.value === value ? 'all' : value;
@@ -1394,6 +1415,23 @@ $('#exportCsvButton').addEventListener('click', () => {
 });
 
 $('#importButton').addEventListener('click', () => $('#importFile').click());
+
+/* 백업·내보내기 메뉴: 항목을 누르거나 바깥을 누르거나 Esc를 누르면 닫는다. */
+function setIOMenu(open, focusButton = false) {
+  $('#ioMenu').hidden = !open;
+  $('#ioMenuButton').setAttribute('aria-expanded', String(open));
+  if (open) $('#ioMenu').querySelector('button').focus();
+  else if (focusButton) $('#ioMenuButton').focus();
+}
+$('#ioMenuButton').addEventListener('click', () => setIOMenu($('#ioMenu').hidden));
+$('#ioMenu').addEventListener('click', event => { if (event.target.closest('button')) setIOMenu(false); });
+$('#ioMenu').addEventListener('keydown', event => {
+  const items = [...$('#ioMenu').querySelectorAll('button')];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') { event.preventDefault(); setIOMenu(false, true); }
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+});
+document.addEventListener('click', event => { if (!$('#ioMenu').hidden && !event.target.closest('.io-actions')) setIOMenu(false); });
 $('#importFile').addEventListener('change', async event => {
   const file = event.target.files?.[0];
   if (!file) return;
