@@ -21,7 +21,6 @@ const subtitles = {
   people:'记录已亲自确认账号的别名和线索。'
 };
 const kindLabels = { bookmark:'书签', like:'喜欢', saved:'手动保存' };
-const kindMarks = kindLabels;
 
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const safeColor = value => (/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value) : '');
@@ -45,22 +44,6 @@ async function waitForTabReady(id) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error('X 页面未能打开。请检查登录状态和网络。');
-}
-
-function normalizePost(item) {
-  if (!item || typeof item !== 'object' || !['bookmark','like','saved'].includes(item.collection) || typeof item.id !== 'string' || !/^\d+$/.test(item.id) || typeof item.url !== 'string' || !/^https:\/\/x\.com\/[^/]+\/status\/\d+$/.test(item.url)) throw new Error('备份中有无效的帖子。');
-  if (item.url.split('/status/')[1] !== item.id) throw new Error('备份中有帖子地址与 ID 不一致的条目。');
-  const account = typeof item.account === 'string' && /^[A-Za-z0-9_]{1,25}$/.test(item.account) ? item.account.toLowerCase() : 'legacy';
-  if (![`${item.collection}:${item.id}`, `${account}:${item.collection}:${item.id}`].includes(item.key)) throw new Error('备份中有无效的帖子。');
-  const string = key => typeof item[key] === 'string' ? item[key].slice(0,100000) : '';
-  const safeList = value => Array.isArray(value) ? value.filter(x => typeof x === 'string' && x.length < 3000).slice(0,30) : [];
-  const images = safeList(item.imageUrls).filter(url => { try { const u = new URL(url); return u.protocol === 'https:' && ['pbs.twimg.com','ton.twimg.com'].includes(u.hostname); } catch { return false; } });
-  const avatarUrl = string('avatarUrl').slice(0,3000);
-  const safeAvatar = (() => { try { const u = new URL(avatarUrl); return u.protocol === 'https:' && u.hostname === 'pbs.twimg.com' ? u.href : ''; } catch { return ''; } })();
-  const links = safeList(item.links).filter(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } });
-  const tags = Array.isArray(item.tags) ? [...new Set(item.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0,40)).filter(Boolean))].slice(0,20) : [];
-  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', linkStatus:['available','unavailable','unknown'].includes(item.linkStatus) ? item.linkStatus : '', checkedAt:string('checkedAt').slice(0,30), ruleApplied:Array.isArray(item.ruleApplied) ? item.ruleApplied.filter(x => typeof x === 'string' && x.length <= 130).slice(-200) : [] };
 }
 
 function notice(message, error = false, action = null) {
@@ -104,16 +87,6 @@ function parseQuery(query) {
   return parsed;
 }
 
-/* 알 수 없는 조건은 null을 돌려준다: 긍정 조건에서는 통과, 부정 조건에서는 무시한다. */
-function hasFlag(item, flag) {
-  if (flag === 'image') return item.media === 'image';
-  if (flag === 'video') return item.media === 'video';
-  if (flag === 'media') return item.media !== 'text';
-  if (flag === 'link') return !!(item.links || []).length;
-  if (flag === 'note') return !!item.note;
-  if (flag === 'tag') return !!(item.tags || []).length;
-  return null;
-}
 function isState(item, state) {
   const reading = item.readingState || 'none';
   if (state === 'read') return reading === 'read';
@@ -376,7 +349,7 @@ function cardHTML(group, terms) {
 <label class="select-post" title="选择要分享或批量整理的帖子"><input type="checkbox" class="post-select" data-keys="${keyData}" aria-label="选择 ${escapeHTML(item.author || item.username)} 的帖子"${allSelected ? ' checked' : ''}></label>
 <div class="avatar">${avatar}</div>
 <div class="identity"><strong>${escapeHTML(item.author || item.username)}</strong><span>@${escapeHTML(item.username)}<em>保存账号 @${escapeHTML(item.accountName || item.account || 'legacy')}</em></span></div>
-<span class="pill" data-kind="${escapeHTML(item.collection)}">${kindMarks[item.collection] || escapeHTML(item.collection)}</span>
+<span class="pill" data-kind="${escapeHTML(item.collection)}">${kindLabels[item.collection] || escapeHTML(item.collection)}</span>
 </div>${duplicateNote}
 <p class="post-text${expanded ? ' expanded' : ''}" id="text-${escapeHTML(textId(item.key))}">${highlightText(item.text || '(未能获取正文)', terms)}</p>
 <button type="button" class="expand-text" data-key="${escapeHTML(item.key)}" aria-controls="text-${escapeHTML(textId(item.key))}" aria-expanded="${expanded}"${expanded ? '' : ' hidden'}>${expanded ? '收起' : '展开全文'}</button>
@@ -481,7 +454,7 @@ function renderPosts() {
   if (groups.length) showMoreCards();
 
   $('#history').innerHTML = [...history].reverse().slice(0,6).map(entry =>
-    `<div class="history-row"><span>${escapeHTML(kindMarks[entry.collection] || entry.collection)}：确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
+    `<div class="history-row"><span>${escapeHTML(kindLabels[entry.collection] || entry.collection)}：确认 ${Number(entry.count) || 0} 条</span><time>${escapeHTML(new Date(entry.at).toLocaleString('zh-CN'))}</time></div>`
   ).join('') || '<p class="muted">还没有导入记录。</p>';
 }
 
@@ -501,11 +474,9 @@ function showMoreCards() {
   if (shownCount >= renderedGroups.length) return;
   const rest = renderedGroups.length - shownCount;
   cards.insertAdjacentHTML('beforeend', `<button type="button" class="ghost load-more">再显示 ${Math.min(rest, RENDER_BATCH).toLocaleString('zh-CN')} 张（还剩 ${rest.toLocaleString('zh-CN')} 张）</button>`);
-  if ('IntersectionObserver' in window) {
-    moreObserver ||= new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) showMoreCards(); }, { rootMargin:'600px' });
-    moreObserver.disconnect();
-    moreObserver.observe(cards.querySelector('.load-more'));
-  }
+  moreObserver ||= new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) showMoreCards(); }, { rootMargin:'600px' });
+  moreObserver.disconnect();
+  moreObserver.observe(cards.querySelector('.load-more'));
 }
 $('#cards').addEventListener('click', event => { if (event.target.closest('.load-more')) showMoreCards(); });
 
@@ -823,11 +794,7 @@ let renderTimer = 0;
 function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 150); }
 
 const filterControls = ['#search','#media','#sort','#accountFilter','#authorFilter','#readFilter','#fromDate','#toDate','#layout','#collapseDuplicates','#untaggedOnly'];
-for (const id of filterControls) {
-  const control = $(id);
-  if (!control) { console.warn(`未找到筛选控件 ${id}。`); continue; }
-  control.addEventListener(id === '#search' ? 'input' : 'change', id === '#search' ? renderSoon : render);
-}
+for (const id of filterControls) $(id).addEventListener(id === '#search' ? 'input' : 'change', id === '#search' ? renderSoon : render);
 for (const id of ['#fromDate','#toDate']) $(id).addEventListener('change', () => { $('#datePreset').value = $('#fromDate').value || $('#toDate').value ? 'custom' : 'all'; });
 
 $('#datePreset').addEventListener('change', () => {
@@ -1238,7 +1205,7 @@ $('#cards').addEventListener('click', async event => {
   const target = posts.find(item => item.key === deleteButton.dataset.key);
   const ok = await confirmAction('删除帖子', `将从此设备的收藏库中移除此帖子。X 账号中的书签和喜欢不受影响。\n\n${(target?.text || target?.url || '').replace(/\s+/g, ' ').trim().slice(0,90)}`, '删除');
   if (!ok) return;
-  await deletePost(deleteButton.dataset.key);
+  await deletePosts([deleteButton.dataset.key]);
   await refresh();
   notice('已从本地收藏库删除。');
 });
@@ -1301,7 +1268,7 @@ async function runWebScan() {
         unseen++;
         if (!known.has(item.id)) { newCount++; fresh++; }
       }
-      if (items.length) await savePosts(account, collection, items, mode);
+      if (items.length) await savePosts(account, collection, items);
       pages++;
       $('#scanProgressText').textContent = progress();
       if (result.warnings.length) throw new Error(result.warnings.join('; '));
@@ -1349,7 +1316,7 @@ $('#scanDialog').addEventListener('close', async () => {
   $('#scanProgress').hidden = false;
   scanPaused = false;
   const pending = new Map();
-  let account, collection, mode;
+  let account, collection;
   try {
     collection = $('#collection').value;
     if (!activeTab) {
@@ -1370,7 +1337,7 @@ $('#scanDialog').addEventListener('close', async () => {
     }
     if (collectionForURL(before.url) !== collection) throw new Error('X 标签页的页面与所选收藏类型不一致。');
     const readAll = $('#rounds').value === 'all';
-    mode = readAll ? 'full' : $('#scanMode').value;
+    const mode = readAll ? 'full' : $('#scanMode').value;
     const maxRounds = readAll ? Infinity : Number($('#rounds').value);
     const known = new Set(posts.filter(item => item.account === account && item.collection === collection).map(item => item.id));
     const seen = new Set();
@@ -1393,18 +1360,18 @@ $('#scanDialog').addEventListener('close', async () => {
       bottomRounds = response.bottom ? bottomRounds + 1 : 0;
       $('#scanProgressText').textContent = `第 ${roundsDone} 步，确认 ${seen.size} 条，新帖 ${newCount} 条`;
       if (pending.size >= 50 || round === maxRounds || noNewRounds >= 4 || bottomRounds >= 3) {
-        if (pending.size) { await savePosts(account, collection, [...pending.values()], mode); pending.clear(); }
+        if (pending.size) { await savePosts(account, collection, [...pending.values()]); pending.clear(); }
       }
       if (bottomRounds >= 3) { stopReason = '已检查到疑似页面末尾的位置。'; break; }
       if (mode === 'incremental' && round >= 3 && noNewRounds >= 2) { stopReason = '连续未发现新帖，已停止快速扫描。'; break; }
       if (noNewRounds >= 4) { stopReason = '连续未发现新帖，已停止。请检查是否有遗漏。'; break; }
     }
-    if (pending.size) await savePosts(account, collection, [...pending.values()], mode);
+    if (pending.size) await savePosts(account, collection, [...pending.values()]);
     await refresh();
     notice(seen.size ? `@${account}：在 ${roundsDone} 步中确认 ${seen.size} 条，新帖 ${newCount} 条。${scanPaused ? '已保存到停止位置。' : stopReason}` : '没有导入任何帖子。请等 X 页面完全打开后重试。', !seen.size);
   } catch (error) {
     if (pending.size && account && collection) {
-      try { await savePosts(account, collection, [...pending.values()], mode || 'partial'); await refresh(); }
+      try { await savePosts(account, collection, [...pending.values()]); await refresh(); }
       catch (saveError) { notice(`导入失败：${error.message}。最后一批数据也未能保存：${saveError.message}`, true); return; }
       notice(`导入已中断，但已保存最后 ${pending.size} 条帖子：${error.message}`, true);
     } else notice(`导入失败：${error.message}`, true);
@@ -1500,7 +1467,7 @@ $('#importFile').addEventListener('change', async event => {
   try {
     if (file.size > 50 * 1024 * 1024) throw new Error('只能导入不超过 50MB 的备份文件。');
     const backup = JSON.parse(await file.text());
-    if (backup.format !== 'x-drawer-backup' || ![1,2,3,4,5,6,7].includes(backup.version) || !Array.isArray(backup.posts)) throw new Error('不支持此备份格式。');
+    if (backup.format !== 'x-drawer-backup' || !(Number.isInteger(backup.version) && backup.version >= 1 && backup.version <= 7) || !Array.isArray(backup.posts)) throw new Error('不支持此备份格式。');
     if (backup.posts.length > 100000) throw new Error('一次最多只能导入 10 万条帖子。');
     const items = backup.posts.map(normalizePost);
 
@@ -1522,7 +1489,7 @@ $('#importFile').addEventListener('change', async event => {
       const tags = Array.isArray(settings.tags)
         ? settings.tags.filter(tag => typeof tag === 'string').map(tag => tag.slice(0,40)).slice(0,20)
         : (typeof settings.tag === 'string' && settings.tag && settings.tag !== 'all' ? [settings.tag.slice(0,40)] : []);
-      return { id:entry.id, name:entry.name.trim(), settings:{ view:text('view'), search:text('search'), media:text('media'), sort:text('sort'), account:text('account'), author:text('author'), tags, reading:text('reading'), link:text('link'), from:text('from'), to:text('to'), preset:text('preset'), layout:text('layout'), collapse:!!settings.collapse, untagged:!!settings.untagged } };
+      return { id:entry.id, name:entry.name.trim(), settings:{ view:text('view'), search:text('search'), media:text('media'), sort:text('sort'), account:text('account'), author:text('author'), tags, reading:text('reading'), from:text('from'), to:text('to'), preset:text('preset'), layout:text('layout'), collapse:!!settings.collapse, untagged:!!settings.untagged, unsorted:!!settings.unsorted } };
     });
 
     const tagItems = backup.version >= 6 ? backup.tags : [];

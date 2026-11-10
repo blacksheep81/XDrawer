@@ -67,7 +67,6 @@ The `key` in `manifest.json` pins the extension ID to `cfpjibdhkfnibjiigeiebdmmo
 |---|---|
 | `cookies` | Reads your x.com sign-in state so it can call the X web API with your current session. Cookies and tokens are never written to the library. |
 | `tabs` | Opens the library page and drives the X tab during scroll import. |
-| `storage` | Declared in the manifest but not used by the current code. The theme simply follows your system setting. |
 | `x.com` / `twitter.com` | Shows the save button on post pages and reads bookmarks and likes. |
 
 Your library lives only inside this extension in this browser. Uninstalling the extension or clearing its data deletes the library, so export a JSON backup now and then.
@@ -79,12 +78,12 @@ Your library lives only inside this extension in this browser. Uninstalling the 
 | `manifest.json` | Extension config (Manifest V3) |
 | `background.js` | Background script that handles manual saves |
 | `capture.js`, `status-path.js` | Injected into X pages: save button, scroll import |
-| `xsync.js`, `x-web-features.json` | X web sync (read-only) |
+| `xsync.js` | X web sync (read-only) |
 | `db.js` | IndexedDB storage, smart categories and auto-tag rules |
 | `library.html`, `library.js`, `style.css` | The main library page |
 | `people.js` | People (人物·小号) |
 | `popup.html`, `popup.js`, `popup.css` | Toolbar popup |
-| `theme.js`, `tokens.css` | Theme and design tokens |
+| `tokens.css` | Design tokens (light/dark follows the system) |
 
 There is no build step. After changing the code, click the reload button on the extension's card in `chrome://extensions`.
 

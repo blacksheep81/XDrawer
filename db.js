@@ -56,9 +56,9 @@ function openDB() {
 }
 
 /* 같은 확장 안의 다른 페이지(收藏库·팝업·백그라운드)에 DB 변경을 알린다. 보낸 쪽 자신에게는 전달되지 않는다. */
-const dbChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('x-drawer-db') : null;
-function announceDBChange() { try { dbChannel?.postMessage({ type:'changed', at:Date.now() }); } catch {} }
-function onDBChange(listener) { if (dbChannel) dbChannel.addEventListener('message', event => { if (event.data?.type === 'changed') listener(); }); }
+const dbChannel = new BroadcastChannel('x-drawer-db');
+function announceDBChange() { dbChannel.postMessage('changed'); }
+function onDBChange(listener) { dbChannel.addEventListener('message', listener); }
 
 async function withTransaction(stores, mode, callback) {
   const db = await openDB();
@@ -98,11 +98,15 @@ function splitTerms(value) {
 /* 규칙이 저장할 수 있는 내용 조건. 읽음 상태·태그처럼 사용자가 바꾸는 값은 자동 태그를 흔들 수 있어 받지 않는다. */
 const RULE_HAS_FLAGS = ['image','video','media','link'];
 function ruleFlags(value) { return [...new Set((Array.isArray(value) ? value : []).map(flag => String(flag).toLowerCase()))].filter(flag => RULE_HAS_FLAGS.includes(flag)); }
-function ruleHasFlag(item, flag) {
+/* 검색(has:)과 규칙이 함께 쓴다. 알 수 없는 조건은 null을 돌려준다: 긍정 조건에서는 통과, 부정 조건에서는 무시한다. */
+function hasFlag(item, flag) {
   if (flag === 'image') return item.media === 'image';
   if (flag === 'video') return item.media === 'video';
   if (flag === 'media') return item.media !== 'text';
-  return !!(item.links || []).length;
+  if (flag === 'link') return !!(item.links || []).length;
+  if (flag === 'note') return !!item.note;
+  if (flag === 'tag') return !!(item.tags || []).length;
+  return null;
 }
 const RULE_TAG_LIMIT = 20;
 /* 손으로 넣거나 뺀 글은 계정·모음과 상관없이 같은 글이 함께 움직이도록 글 ID로 기억한다. */
@@ -154,8 +158,8 @@ function ruleMatches(rule, item, text = ruleText(item)) {
   const username = String(item.username || '').toLowerCase();
   if (rule.authors.length && !rule.authors.includes(username)) return false;
   if ((rule.notAuthors || []).includes(username)) return false;
-  if (!(rule.has || []).every(flag => ruleHasFlag(item, flag))) return false;
-  if ((rule.notHas || []).some(flag => ruleHasFlag(item, flag))) return false;
+  if (!(rule.has || []).every(flag => hasFlag(item, flag))) return false;
+  if ((rule.notHas || []).some(flag => hasFlag(item, flag))) return false;
   if (rule.keywords.length && !(rule.match === 'all' ? rule.keywords.every(term => text.includes(term)) : rule.keywords.some(term => text.includes(term)))) return false;
   return !rule.exclude.some(term => text.includes(term));
 }
@@ -172,8 +176,7 @@ function applyRuleTo(rule, item) {
   return { added, full:false, item: { ...withTags(item, added ? [...tags, rule.tag] : tags), ruleApplied: [...applied, mark].slice(-200) } };
 }
 async function getRules() {
-  try { return (await getAll('smartRules')).map(rule => { try { return normalizeRule(rule); } catch { return null; } }).filter(Boolean); }
-  catch { return []; }
+  return (await getAll('smartRules')).map(rule => { try { return normalizeRule(rule); } catch { return null; } }).filter(Boolean);
 }
 async function putRule(rule) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').put(normalizeRule(rule))); }
 async function deleteRule(id) { await withTransaction('smartRules', 'readwrite', tx => tx.objectStore('smartRules').delete(id)); }
@@ -227,6 +230,23 @@ async function undoRuleApply(mark, tag, marked, added) {
   return { removed, kept };
 }
 
+/* 가져오기·백업·수동 저장으로 들어오는 글을 모두 이 함수로 검사한다. */
+function normalizePost(item) {
+  if (!item || typeof item !== 'object' || !['bookmark','like','saved'].includes(item.collection) || typeof item.id !== 'string' || !/^\d+$/.test(item.id) || typeof item.url !== 'string' || !/^https:\/\/x\.com\/[^/]+\/status\/\d+$/.test(item.url)) throw new Error('备份中有无效的帖子。');
+  if (item.url.split('/status/')[1] !== item.id) throw new Error('备份中有帖子地址与 ID 不一致的条目。');
+  const account = typeof item.account === 'string' && /^[A-Za-z0-9_]{1,25}$/.test(item.account) ? item.account.toLowerCase() : 'legacy';
+  if (![`${item.collection}:${item.id}`, `${account}:${item.collection}:${item.id}`].includes(item.key)) throw new Error('备份中有无效的帖子。');
+  const string = key => typeof item[key] === 'string' ? item[key].slice(0,100000) : '';
+  const safeList = value => Array.isArray(value) ? value.filter(x => typeof x === 'string' && x.length < 3000).slice(0,30) : [];
+  const images = safeList(item.imageUrls).filter(url => { try { const u = new URL(url); return u.protocol === 'https:' && ['pbs.twimg.com','ton.twimg.com'].includes(u.hostname); } catch { return false; } });
+  const avatarUrl = string('avatarUrl').slice(0,3000);
+  const safeAvatar = (() => { try { const u = new URL(avatarUrl); return u.protocol === 'https:' && u.hostname === 'pbs.twimg.com' ? u.href : ''; } catch { return ''; } })();
+  const links = safeList(item.links).filter(url => { try { return new URL(url).protocol === 'https:'; } catch { return false; } });
+  const tags = Array.isArray(item.tags) ? [...new Set(item.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0,40)).filter(Boolean))].slice(0,20) : [];
+  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return { id:item.id, key:`${account}:${item.collection}:${item.id}`, account, accountName:string('accountName').slice(0,15), url:item.url, collection:item.collection, username:string('username'), author:string('author'), avatarUrl:safeAvatar, text:string('text'), note:string('note').slice(0,2000), date:string('date'), savedAt:string('savedAt') || new Date().toISOString(), updatedAt:string('updatedAt'), media:['text','image','video'].includes(item.media) ? item.media : 'text', imageUrls:images, links, tags, likeCount:count(item.likeCount), viewCount:count(item.viewCount), readingState:['later','read'].includes(item.readingState) ? item.readingState : 'none', ruleApplied:Array.isArray(item.ruleApplied) ? item.ruleApplied.filter(x => typeof x === 'string' && x.length <= 130).slice(-200) : [] };
+}
+
 /* 새 태그 이름을 태그 목록에 등록한다. 이미 있으면 색과 메모를 유지한다. */
 function registerTags(store, names, at) {
   for (const name of new Set(names.filter(Boolean))) {
@@ -235,7 +255,7 @@ function registerTags(store, names, at) {
   }
 }
 
-async function savePosts(account, collection, items, mode = 'manual') {
+async function savePosts(account, collection, items) {
   const at = new Date().toISOString();
   const rules = (await getRules()).filter(rule => rule.tag);
   await withTransaction(['posts', 'history', 'tags'], 'readwrite', tx => {
@@ -246,7 +266,7 @@ async function savePosts(account, collection, items, mode = 'manual') {
       const request = store.get(key);
       request.onsuccess = () => {
         const previous = request.result;
-        let record = { ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], ruleApplied: previous?.ruleApplied || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', linkStatus:previous?.linkStatus || item.linkStatus || '', checkedAt:previous?.checkedAt || item.checkedAt || '', savedAt: previous?.savedAt || at, updatedAt: at };
+        let record = { ...item, key, account, collection, avatarUrl:item.avatarUrl || previous?.avatarUrl || '', likeCount:item.likeCount ?? previous?.likeCount ?? null, viewCount:item.viewCount ?? previous?.viewCount ?? null, tags: previous?.tags || item.tags || [], ruleApplied: previous?.ruleApplied || [], note: previous?.note || item.note || '', readingState:previous?.readingState || item.readingState || 'none', savedAt: previous?.savedAt || at, updatedAt: at };
         // 새로 가져오거나 저장한 글에 자동 태그 규칙을 적용한다.
         for (const rule of rules) {
           const result = applyRuleTo(rule, record);
@@ -258,7 +278,7 @@ async function savePosts(account, collection, items, mode = 'manual') {
       };
     }
     const historyStore = tx.objectStore('history');
-    historyStore.add({ account, collection, mode, count: items.length, at });
+    historyStore.add({ account, collection, count: items.length, at });
     // 기록이 무한정 쌓이지 않도록 오래된 항목부터 정리한다.
     const countRequest = historyStore.count();
     countRequest.onsuccess = () => {
@@ -288,26 +308,16 @@ async function importPosts(items) {
         const tags = [...new Set([...(existing.tags || []), ...(item.tags || [])])].slice(0,20);
         registerTags(tagStore, tags, at);
         const ruleApplied = [...new Set([...(existing.ruleApplied || []), ...(item.ruleApplied || [])])].slice(-200);
-        store.put({ ...withTags(existing, tags), avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none', linkStatus:existing.linkStatus || item.linkStatus || '', checkedAt:existing.checkedAt || item.checkedAt || '' });
+        store.put({ ...withTags(existing, tags), avatarUrl:existing.avatarUrl || item.avatarUrl || '', likeCount:existing.likeCount ?? item.likeCount ?? null, viewCount:existing.viewCount ?? item.viewCount ?? null, ruleApplied, note: existing.note || item.note || '', readingState:existing.readingState || item.readingState || 'none' });
       };
     }
   });
 }
 
-async function deletePost(key) { await withTransaction('posts', 'readwrite', tx => tx.objectStore('posts').delete(key)); }
-
 async function deletePosts(keys) {
   await withTransaction('posts', 'readwrite', tx => {
     const store = tx.objectStore('posts');
     for (const key of keys) store.delete(key);
-  });
-}
-
-async function updateTags(key, tags) {
-  await withTransaction('posts', 'readwrite', tx => {
-    const store = tx.objectStore('posts');
-    const request = store.get(key);
-    request.onsuccess = () => { if (request.result) store.put(withTags(request.result, tags)); };
   });
 }
 
@@ -320,14 +330,6 @@ async function updateOrganization(key, tags, note) {
     request.onsuccess = () => {
       if (request.result) store.put({ ...withTags(request.result, tags), note, updatedAt:at });
     };
-  });
-}
-
-async function updatePostFields(key, fields) {
-  await withTransaction('posts', 'readwrite', tx => {
-    const store = tx.objectStore('posts');
-    const request = store.get(key);
-    request.onsuccess = () => { if (request.result) store.put({ ...request.result, ...fields }); };
   });
 }
 
