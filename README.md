@@ -67,7 +67,6 @@ X 抽屉是一个 Chrome 扩展，把你在 X（Twitter）上的书签、喜欢�
 |---|---|
 | `cookies` | 读取 x.com 的登录状态，用来以当前会话调用 X 网页接口。Cookie 和令牌不会写入收藏库。 |
 | `tabs` | 打开收藏库页面，以及在“滚动页面读取”时操作 X 标签页。 |
-| `storage` | 已在清单中声明，当前代码没有用到。界面主题直接跟随系统设置。 |
 | `x.com` / `twitter.com` | 在帖子页面显示保存按钮，以及读取书签和喜欢。 |
 
 收藏数据只存在当前浏览器的这个扩展里。卸载扩展或清除扩展数据会删除收藏库，请定期用「导出 JSON 备份」保存一份。
@@ -79,12 +78,12 @@ X 抽屉是一个 Chrome 扩展，把你在 X（Twitter）上的书签、喜欢�
 | `manifest.json` | 扩展配置（Manifest V3） |
 | `background.js` | 后台脚本，处理手动保存 |
 | `capture.js`、`status-path.js` | 注入 X 页面：保存按钮、滚动读取 |
-| `xsync.js`、`x-web-features.json` | X 网页同步（只读） |
+| `xsync.js` | X 网页同步（只读） |
 | `db.js` | IndexedDB 存储、智能分类和自动标签规则 |
 | `library.html`、`library.js`、`style.css` | 收藏库主页面 |
 | `people.js` | 人物·小号 |
 | `popup.html`、`popup.js`、`popup.css` | 工具栏弹窗 |
-| `theme.js`、`tokens.css` | 主题和设计变量 |
+| `tokens.css` | 设计变量（浅色/深色跟随系统） |
 
 项目不需要构建，修改代码后在 `chrome://extensions` 点击扩展卡片上的刷新按钮即可。
 

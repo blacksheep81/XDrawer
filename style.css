@@ -90,8 +90,6 @@
 .rail-empty button { padding: 0; border: 0; background: none; color: var(--rail-ink); text-decoration: underline; font: inherit; cursor: pointer; }
 
 .rail-foot { margin-top: auto; display: grid; gap: 12px; }
-.rail-foot .theme-switch { width: 100%; }
-.rail-foot .theme-switch button { flex: 1; }
 .rail-note {
   margin: 0;
   padding-top: 12px;
@@ -107,26 +105,6 @@
   border-radius: 50%;
   background: var(--teal);
 }
-
-.theme-switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--rail-line);
-  border-radius: var(--r-md);
-  background: var(--rail-2);
-}
-.theme-switch button {
-  border: 0;
-  border-radius: var(--r-sm);
-  padding: 6px 10px;
-  background: transparent;
-  color: var(--rail-muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-.theme-switch button:hover { color: var(--rail-ink); }
-.theme-switch button.active { background: var(--paper); color: var(--ink); }
 
 /* ── 본문 ───────────────────────────────────────── */
 main {
@@ -173,7 +151,7 @@ h1 { margin: 0 0 6px; font-family: var(--serif); font-size: clamp(28px, 2.6vw, 3
 .ghost:hover:not(:disabled) { border-color: var(--brass); color: var(--brass-ink); }
 .ghost.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 .danger-solid { background: var(--bad); color: #fff; }
-html[data-theme="dark"] .danger-solid { color: #2a1311; }
+@media (prefers-color-scheme: dark) { .danger-solid { color: #2a1311; } }
 
 /* ── 검색·필터 ──────────────────────────────────── */
 .searchbar { position: relative; display: flex; gap: 9px; align-items: stretch; margin-bottom: 12px; }

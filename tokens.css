@@ -58,53 +58,55 @@
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
 }
 
-html[data-theme="dark"] {
-  color-scheme: dark;
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
 
-  --rail:       #16231f;
-  --rail-2:     #1f302b;
-  --rail-3:     #283c36;
-  --rail-line:  #33493f;
-  --rail-ink:   #e6ece7;
-  --rail-muted: #93a59d;
+    --rail:       #16231f;
+    --rail-2:     #1f302b;
+    --rail-3:     #283c36;
+    --rail-line:  #33493f;
+    --rail-ink:   #e6ece7;
+    --rail-muted: #93a59d;
 
-  --paper:      #1a2422;
-  --paper-deep: #141c1a;
-  --surface:    #22302d;
-  --surface-2:  #2a3936;
-  --surface-3:  #33443f;
-  --line:       #3a4b47;
-  --line-soft:  #2f3f3b;
+    --paper:      #1a2422;
+    --paper-deep: #141c1a;
+    --surface:    #22302d;
+    --surface-2:  #2a3936;
+    --surface-3:  #33443f;
+    --line:       #3a4b47;
+    --line-soft:  #2f3f3b;
 
-  --ink:        #e6ece7;
-  --ink-2:      #cdd6d1;
-  --muted:      #a2b0aa;
-  --faint:      #8d9b96;
+    --ink:        #e6ece7;
+    --ink-2:      #cdd6d1;
+    --muted:      #a2b0aa;
+    --faint:      #8d9b96;
 
-  --brass:      #e0b04c;
-  --brass-ink:  #eec778;
-  --brass-soft: #3a311c;
-  --brass-line: #5c4c27;
+    --brass:      #e0b04c;
+    --brass-ink:  #eec778;
+    --brass-soft: #3a311c;
+    --brass-line: #5c4c27;
 
-  --rose:       #ec8fa6;
-  --rose-soft:  #40272e;
-  --teal:       #6fd3c3;
-  --teal-soft:  #1d3b36;
+    --rose:       #ec8fa6;
+    --rose-soft:  #40272e;
+    --teal:       #6fd3c3;
+    --teal-soft:  #1d3b36;
 
-  --ok:         #7fd6a7;
-  --ok-soft:    #1a322a;
-  --ok-line:    #2d5742;
-  --bad:        #f0a39a;
-  --bad-soft:   #3a2422;
-  --bad-line:   #5e3430;
+    --ok:         #7fd6a7;
+    --ok-soft:    #1a322a;
+    --ok-line:    #2d5742;
+    --bad:        #f0a39a;
+    --bad-soft:   #3a2422;
+    --bad-line:   #5e3430;
 
-  --btn-ink:    #e0b04c;
-  --btn-ink-h:  #eec778;
-  --on-dark:    #1a2422;
+    --btn-ink:    #e0b04c;
+    --btn-ink-h:  #eec778;
+    --on-dark:    #1a2422;
 
-  --shadow-1: none;
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, .3);
-  --shadow-3: 0 18px 48px rgba(0, 0, 0, .55);
+    --shadow-1: none;
+    --shadow-2: 0 2px 8px rgba(0, 0, 0, .3);
+    --shadow-3: 0 18px 48px rgba(0, 0, 0, .55);
+  }
 }
 
 * { box-sizing: border-box; }

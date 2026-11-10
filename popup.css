@@ -15,28 +15,6 @@
 }
 .pop-brand { font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.1; flex: 1; }
 
-.theme-switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--rail-line);
-  border-radius: var(--r-md);
-  background: var(--rail-2);
-}
-.theme-switch button {
-  border: 0;
-  border-radius: var(--r-sm);
-  padding: 4px 9px;
-  background: transparent;
-  color: var(--rail-muted);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-}
-.theme-switch button:hover { color: var(--rail-ink); }
-.theme-switch button.active { background: var(--paper); color: var(--ink); }
-.theme-switch.compact button { padding: 4px 7px; font-size: 12px; }
-
 .pop-search {
   display: flex;
   align-items: center;
